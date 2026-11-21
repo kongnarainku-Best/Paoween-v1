@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
+import { outputTokenOptions, readOutputTokenLimit } from "@/lib/finance/ai-output-limit";
 import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCategoryOptions, parseReplySuggestions, proposalSchema } from "@/lib/finance/assistant-actions";
 import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
@@ -360,11 +361,12 @@ export async function POST(request: Request) {
     p_estimated_input_tokens: Math.max(1, estimatedInputTokens),
   });
 
-  if (reservationError) {
-    const reason = reservationError.message.includes("AI_DISABLED") ? "AI budget policy has not been enabled yet." :
-      reservationError.message.includes("USER_DAILY_LIMIT") ? "You have reached today's AI limit." :
-      reservationError.message.includes("GLOBAL_DAILY_LIMIT") ? "AI is temporarily unavailable for today." :
-      reservationError.message.includes("INPUT_LIMIT") ? "This message and selected context exceed the current AI limit." :
+  const maxOutputTokens = readOutputTokenLimit(reservation);
+  if (reservationError || maxOutputTokens === null) {
+    const reason = reservationError?.message.includes("AI_DISABLED") ? "AI budget policy has not been enabled yet." :
+      reservationError?.message.includes("USER_DAILY_LIMIT") ? "You have reached today's AI limit." :
+      reservationError?.message.includes("GLOBAL_DAILY_LIMIT") ? "AI is temporarily unavailable for today." :
+      reservationError?.message.includes("INPUT_LIMIT") ? "This message and selected context exceed the current AI limit." :
       "AI budget limits are not configured yet.";
     const status = reason.includes("limit") || reason.includes("today") ? 429 : 503;
     return Response.json({ error: reason }, { status });
@@ -392,7 +394,7 @@ export async function POST(request: Request) {
               store: false,
               reasoning: { effort: "medium" },
               input,
-              max_output_tokens: reservation.max_output_tokens,
+              ...outputTokenOptions(maxOutputTokens),
               text: { format: { type: "json_schema", name: "paoween_finance_reply", strict: true, schema: assistantOutputSchema } },
             }, { signal: localAbortController.signal });
             let lastReply = "";
