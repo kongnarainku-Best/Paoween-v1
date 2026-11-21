@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { createDeletionProof, deletionCookieOptions, deletionGrantCookie, deletionReauthCookie, hasDeletionGrant } from "@/lib/finance/account-deletion";
 import { readFormString, stateFromIssues, type FinanceFormState } from "@/lib/finance/form-state";
-import { getSignedInUser, hasRecentGoogleAuthentication } from "@/lib/finance/server";
+import { getSignedInUser } from "@/lib/finance/server";
 import { taxRecordSchema, transactionSchema } from "@/lib/finance/validation";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -148,46 +149,55 @@ export async function deleteTaxRecordAction(formData: FormData) {
 
 export async function startDeleteAccountReauthAction() {
   if (!hasSupabaseEnv()) redirect("/dashboard/settings/delete?error=setup");
-  const { supabase } = await getSignedInUser();
+  if (!process.env.SUPABASE_SECRET_KEY) redirect("/dashboard/settings/delete?error=service-key");
+  const { supabase, userId, claims } = await getSignedInUser();
+  if (typeof claims.session_id !== "string") redirect("/dashboard/settings/delete?error=reauth");
+  const proof = createDeletionProof("reauth", userId, claims.session_id);
+  if (!proof) redirect("/dashboard/settings/delete?error=service-key");
+
   const cookieStore = await cookies();
-  cookieStore.set("paoween_delete_reauth", "1", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 300,
-  });
+  cookieStore.delete(deletionGrantCookie);
+  cookieStore.set(deletionReauthCookie, proof, deletionCookieOptions);
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: new URL("/auth/callback", siteUrl).toString(), queryParams: { prompt: "login" } },
+    options: { redirectTo: new URL("/auth/callback", siteUrl).toString(), queryParams: { prompt: "select_account" } },
   });
   if (error || !data.url) {
-    cookieStore.delete("paoween_delete_reauth");
+    cookieStore.delete(deletionReauthCookie);
     redirect("/dashboard/settings/delete?error=reauth");
   }
   redirect(data.url);
 }
 
 export async function deleteAccountAction(formData: FormData) {
-  const { userId, claims } = await getSignedInUser();
-  const email = typeof claims.email === "string" ? claims.email : "";
-  if (!hasRecentGoogleAuthentication(claims as Record<string, unknown>)) {
+  if (!process.env.SUPABASE_SECRET_KEY) redirect("/dashboard/settings/delete?error=service-key");
+
+  const { supabase, userId, claims } = await getSignedInUser();
+  const cookieStore = await cookies();
+  if (!hasDeletionGrant(cookieStore.get(deletionGrantCookie)?.value, claims)) {
     redirect("/dashboard/settings/delete?error=reauth-required");
   }
-  if (!email || readFormString(formData, "confirm_email").toLowerCase() !== email.toLowerCase() || readFormString(formData, "confirm_delete") !== "yes") {
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || user?.id !== userId) redirect("/dashboard/settings/delete?error=reauth-required");
+  if (!user.email || readFormString(formData, "confirm_email").toLowerCase() !== user.email.toLowerCase() || readFormString(formData, "confirm_delete") !== "yes") {
     redirect("/dashboard/settings/delete?error=confirmation");
   }
-  if (!process.env.SUPABASE_SECRET_KEY) redirect("/dashboard/settings/delete?error=service-key");
 
   const service = createServiceClient();
   const { error } = await service.auth.admin.deleteUser(userId, false);
   if (error) redirect("/dashboard/settings/delete?error=delete");
-  const cookieStore = await cookies();
-  cookieStore.getAll().filter((cookie) => /^sb-.+-auth-token(?:\.\d+)?$/.test(cookie.name)).forEach((cookie) => cookieStore.delete(cookie.name));
+
+  for (const cookie of cookieStore.getAll()) {
+    if (/^sb-.+-auth-token(?:-code-verifier)?(?:\.\d+)?$/.test(cookie.name)) cookieStore.delete(cookie.name);
+  }
+  cookieStore.delete("paoween_setup_complete");
+  cookieStore.delete(deletionReauthCookie);
+  cookieStore.delete(deletionGrantCookie);
   revalidatePath("/dashboard", "layout");
-  redirect("/");
+  redirect("/?account=deleted");
 }
 
 function zodUuid(value: string) {

@@ -88,7 +88,7 @@ export default async function SettingsPage() {
     </section>
     <section className="settings-card danger-zone">
       <div className="settings-icon"><Trash2 size={20} aria-hidden="true" /></div>
-      <div><h2>ลบบัญชีและข้อมูล</h2><p>ลบรายการ รายการภาษี และโปรไฟล์ของ {email} อย่างถาวร หลังยืนยันตัวตนอีกครั้ง</p><small>การลบอาจใช้เวลาสักครู่ และไม่สามารถกู้คืนข้อมูลได้</small></div>
+      <div><h2>ลบบัญชีและข้อมูล</h2><p>ลบบัญชี Paoween ของ {email} พร้อมโปรไฟล์ ธุรกรรม รายการภาษี และประวัติการใช้ AI ในแอป</p><small>ยืนยันตัวตนด้วย Google ก่อนลบ ข้อมูลที่ลบแล้วกู้คืนไม่ได้</small></div>
       <Link className="button-danger" href="/dashboard/settings/delete">จัดการการลบบัญชี</Link>
     </section>
   </div>;

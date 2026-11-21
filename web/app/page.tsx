@@ -4,7 +4,7 @@ import Image from "next/image";
 import { signInWithGoogle } from "@/app/actions";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 
-type SearchParams = Promise<{ error?: string }>;
+type SearchParams = Promise<{ error?: string; account?: string }>;
 
 const authErrors: Record<string, string> = {
   setup: "ระบบล็อกอินยังตั้งค่าไม่ครบ ผู้ดูแลต้องเพิ่มค่าของ Supabase ก่อน",
@@ -13,7 +13,7 @@ const authErrors: Record<string, string> = {
 };
 
 export default async function Home({ searchParams }: { searchParams: SearchParams }) {
-  const { error } = await searchParams;
+  const { error, account } = await searchParams;
   const configured = hasSupabaseEnv();
 
   return (
@@ -38,6 +38,8 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
           {error && authErrors[error] ? (
             <p className="notice notice-error" role="alert">{authErrors[error]}</p>
           ) : null}
+
+          {account === "deleted" && !error && <p className="notice notice-success" role="status">ลบบัญชี Paoween และข้อมูลของบัญชีเรียบร้อยแล้ว</p>}
 
           <form action={signInWithGoogle}>
             <button className="google-button" type="submit" disabled={!configured}>
