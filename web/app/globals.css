@@ -607,6 +607,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 .onboarding-slip-preview strong svg { flex: 0 0 auto; }
 .onboarding-slip-preview small { color: var(--muted); font-size: 9px; }
 .onboarding-slip-preview .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--danger); cursor: pointer; }
+.onboarding-pdf-icon { position: relative; width: 132px; height: 112px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--brand-soft); color: var(--brand-strong); }
+.onboarding-pdf-icon b { position: absolute; bottom: 14px; font-size: 11px; letter-spacing: .08em; }
 .onboarding-local-note { max-width: 550px; display: flex; align-items: flex-start; gap: 8px; margin: 13px 0 0; padding: 10px 12px; border-radius: 10px; background: #eff3eb; color: #55715a; font-size: 10px; line-height: 1.7; }
 .onboarding-local-note svg { flex: 0 0 auto; margin-top: 1px; }
 .onboarding-summary { width: min(100%, 550px); display: grid; grid-template-columns: 32px minmax(0,1fr) 32px; align-items: center; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
@@ -671,6 +673,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
   .onboarding-dropzone { min-height: 170px; padding: 11px; }
   .onboarding-slip-preview { grid-template-columns: 82px minmax(0,1fr) 30px; gap: 8px; }
   .onboarding-slip-preview img { width: 82px; height: 88px; }
+  .onboarding-pdf-icon { width: 82px; height: 88px; }
   .onboarding-slip-preview strong { font-size: 9px; }
   .onboarding-footer { min-height: 42px; align-items: flex-start; flex-direction: column; justify-content: center; gap: 2px; padding-block: 8px; }
   .assistant-page-hero { min-height: 0; grid-template-columns: minmax(0, 1fr) 106px; gap: 9px; padding: 17px 13px; border-radius: 15px; }

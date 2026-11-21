@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, FileImage, ImagePlus, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, FileImage, FileText, ImagePlus, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
@@ -9,8 +9,13 @@ import { completeOnboardingAction } from "@/app/settings/new-user/actions";
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
 
 type Step = 1 | 2 | 3;
-const acceptedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxSlipBytes = 10 * 1024 * 1024;
+type SlipKind = "image" | "pdf";
+
+function formatFileSize(bytes: number) {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 export function NewUserSetup({ accountName }: { accountName: string }) {
   const router = useRouter();
@@ -18,27 +23,52 @@ export function NewUserSetup({ accountName }: { accountName: string }) {
   const [salary, setSalary] = useState("");
   const [savedSalary, setSavedSalary] = useState<number | null>(null);
   const [slip, setSlip] = useState<File | null>(null);
+  const [slipKind, setSlipKind] = useState<SlipKind | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
+  const [checkingFile, setCheckingFile] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [saving, startSaving] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+  const fileSelection = useRef(0);
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
-  function chooseSlip(file?: File) {
-    setError("");
+  async function chooseSlip(file?: File) {
     if (!file) return;
-    if (!acceptedTypes.has(file.type)) {
-      setError("รองรับเฉพาะภาพ JPG, PNG หรือ WebP");
+    const selection = ++fileSelection.current;
+    setCheckingFile(false);
+    setError("");
+    const isPdf = file.type === "application/pdf" || (file.type === "" && file.name.toLowerCase().endsWith(".pdf"));
+    if (!isPdf && !acceptedImageTypes.has(file.type)) {
+      setError("รองรับเฉพาะภาพ JPG, PNG, WebP หรือไฟล์ PDF");
       return;
     }
     if (file.size > maxSlipBytes) {
-      setError("เลือกภาพที่มีขนาดไม่เกิน 10 MB");
+      setError("เลือกไฟล์ที่มีขนาดไม่เกิน 10 MB");
       return;
     }
+    if (isPdf) {
+      setCheckingFile(true);
+      let header: string;
+      try {
+        header = await file.slice(0, 5).text();
+      } catch {
+        if (selection !== fileSelection.current) return;
+        setCheckingFile(false);
+        setError("ตรวจไฟล์ PDF ไม่สำเร็จ ลองเลือกไฟล์อีกครั้ง");
+        return;
+      }
+      if (selection !== fileSelection.current) return;
+      setCheckingFile(false);
+      if (header !== "%PDF-") {
+        setError("ไฟล์นี้ไม่มีหัวไฟล์ PDF ลองเลือกไฟล์ statement อีกครั้ง");
+        return;
+      }
+    }
     setSlip(file);
-    setPreviewUrl(URL.createObjectURL(file));
+    setSlipKind(isPdf ? "pdf" : "image");
+    setPreviewUrl(isPdf ? "" : URL.createObjectURL(file));
   }
 
   function continueFromSalary(skip = false) {
@@ -60,7 +90,7 @@ export function NewUserSetup({ accountName }: { accountName: string }) {
   function finishSetup() {
     setSaveError(false);
     try {
-      sessionStorage.setItem("paoween-onboarding-handoff", JSON.stringify({ salary: savedSalary, hasSlip: Boolean(slip) }));
+      sessionStorage.setItem("paoween-onboarding-handoff", JSON.stringify({ salary: savedSalary, hasSlip: Boolean(slip), fileKind: slipKind }));
     } catch {
       setSaveError(true);
       return;
@@ -78,8 +108,15 @@ export function NewUserSetup({ accountName }: { accountName: string }) {
     });
   }
 
+  function cancelFileCheck() {
+    fileSelection.current += 1;
+    setCheckingFile(false);
+  }
+
   function removeSlip() {
+    cancelFileCheck();
     setSlip(null);
+    setSlipKind(null);
     setPreviewUrl("");
     setError("");
     if (fileRef.current) fileRef.current.value = "";
@@ -113,15 +150,16 @@ export function NewUserSetup({ accountName }: { accountName: string }) {
 
         {step === 2 && <>
           <p className="eyebrow">เริ่มบันทึกด้วยกัน · 02 / 03</p>
-          <h1>มีสลิปรายจ่ายไหม?<br />เลือกภาพไว้ดูได้เลย</h1>
+          <h1>มีสลิปหรือ statement ไหม?<br />เลือกไฟล์ไว้ดูได้เลย</h1>
           <p className="onboarding-lead">เริ่มจากรายการที่อยากจดตั้งแต่วันนี้ ไม่ต้องย้อนหาให้ครบทุกใบ</p>
-          <div className={`onboarding-dropzone${slip ? " has-slip" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); chooseSlip(event.dataTransfer.files[0]); }}>
-            <input ref={fileRef} className="sr-only" id="onboarding-slip" type="file" accept="image/jpeg,image/png,image/webp" aria-label="เลือกภาพสลิป" onChange={(event) => chooseSlip(event.target.files?.[0])} />
-            {slip && previewUrl ? <div className="onboarding-slip-preview"><Image src={previewUrl} alt="ภาพสลิปที่เลือกสำหรับดูตัวอย่าง" width={220} height={156} unoptimized /><div><strong><FileImage size={15} aria-hidden="true" /> {slip.name}</strong><small>พร้อมดูตัวอย่างในหน้านี้</small></div><button type="button" className="icon-button" aria-label="นำภาพสลิปออก" onClick={removeSlip}><Trash2 size={16} aria-hidden="true" /></button></div> : <label htmlFor="onboarding-slip" className="onboarding-dropzone-prompt"><span className="onboarding-upload-icon"><ImagePlus size={21} aria-hidden="true" /></span><strong>เลือกภาพสลิป หรือลากมาวางที่นี่</strong><small>รองรับ JPG, PNG และ WebP · ไม่เกิน 10 MB</small><span className="button-secondary button-small">เลือกภาพสลิป <ArrowRight size={14} aria-hidden="true" /></span></label>}
+          <div className={`onboarding-dropzone${slip ? " has-slip" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void chooseSlip(event.dataTransfer.files[0]); }}>
+            <input ref={fileRef} className="sr-only" id="onboarding-slip" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.pdf" aria-label="เลือกภาพสลิปหรือไฟล์ statement PDF" onChange={(event) => void chooseSlip(event.target.files?.[0])} />
+            {slip && slipKind === "image" && previewUrl ? <div className="onboarding-slip-preview"><Image src={previewUrl} alt="ภาพสลิปที่เลือกสำหรับดูตัวอย่าง" width={220} height={156} unoptimized /><div><strong><FileImage size={15} aria-hidden="true" /> {slip.name}</strong><small>พร้อมดูตัวอย่างในหน้านี้</small></div><button type="button" className="icon-button" aria-label="นำภาพสลิปออก" onClick={removeSlip}><Trash2 size={16} aria-hidden="true" /></button></div> : slip && slipKind === "pdf" ? <div className="onboarding-slip-preview onboarding-pdf-preview"><span className="onboarding-pdf-icon" aria-hidden="true"><FileText size={34} /><b>PDF</b></span><div><strong><FileText size={15} aria-hidden="true" /> {slip.name}</strong><small>statement PDF · {formatFileSize(slip.size)} · ยังไม่ได้เปิดอ่านเนื้อหา</small></div><button type="button" className="icon-button" aria-label="นำไฟล์ statement ออก" onClick={removeSlip}><Trash2 size={16} aria-hidden="true" /></button></div> : <label htmlFor="onboarding-slip" className="onboarding-dropzone-prompt"><span className="onboarding-upload-icon"><ImagePlus size={21} aria-hidden="true" /></span><strong>เลือกสลิปหรือ statement PDF หรือลากมาวางที่นี่</strong><small>รองรับ JPG, PNG, WebP และ PDF · ไม่เกิน 10 MB</small><span className="button-secondary button-small">เลือกไฟล์ <ArrowRight size={14} aria-hidden="true" /></span></label>}
           </div>
-          <p className="onboarding-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>รูปจะแสดงอยู่ในหน้านี้เท่านั้น ตอนนี้เว็บยังไม่อัปโหลดหรืออ่านสลิป และจะไม่บันทึกรายการให้เอง</span></p>
+          <p className="onboarding-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>ไฟล์จะอยู่ในหน้านี้เท่านั้น ตอนนี้เว็บยังไม่อัปโหลดหรืออ่านสลิปและ statement และจะไม่บันทึกรายการให้เอง</span></p>
+          {checkingFile && <p role="status">กำลังตรวจไฟล์ PDF…</p>}
           {error && <p className="notice notice-error onboarding-error" role="alert">{error}</p>}
-          <div className="onboarding-actions"><button className="button-primary" type="button" onClick={() => setStep(3)}>ไปดูสรุป <ArrowRight size={16} aria-hidden="true" /></button><button className="button-secondary" type="button" onClick={() => setStep(1)}><ArrowLeft size={15} aria-hidden="true" /> ย้อนกลับ</button><button className="onboarding-skip" type="button" onClick={() => { removeSlip(); setStep(3); }}>ยังไม่มีสลิป ข้ามไปก่อน</button></div>
+          <div className="onboarding-actions"><button className="button-primary" type="button" disabled={checkingFile} onClick={() => setStep(3)}>ไปดูสรุป <ArrowRight size={16} aria-hidden="true" /></button><button className="button-secondary" type="button" onClick={() => { cancelFileCheck(); setStep(1); }}><ArrowLeft size={15} aria-hidden="true" /> ย้อนกลับ</button><button className="onboarding-skip" type="button" onClick={() => { removeSlip(); setStep(3); }}>ยังไม่มีไฟล์ ข้ามไปก่อน</button></div>
         </>}
 
         {step === 3 && <>
@@ -130,9 +168,9 @@ export function NewUserSetup({ accountName }: { accountName: string }) {
           <p className="onboarding-lead">ต่อจากนี้ค่อย ๆ เติมรายการจริงเมื่อพร้อม เป๋าวีนจะช่วยดูภาพรวมไปด้วยกัน</p>
           <div className="onboarding-review-summary">
             <div><span>เงินเดือนต่อเดือน</span><strong>{savedSalary === null ? "ยังไม่ได้ระบุ" : `${new Intl.NumberFormat("th-TH", { maximumFractionDigits: 2 }).format(savedSalary)} บาท`}</strong></div>
-            <div><span>สลิปที่เลือก</span><strong>{slip ? "เลือกไว้ดูตัวอย่าง" : "ยังไม่ได้เลือก"}</strong></div>
+            <div><span>ไฟล์ที่เลือก</span><strong>{slip ? (slipKind === "pdf" ? "statement PDF เลือกไว้ดูชื่อไฟล์" : "สลิปเลือกไว้ดูตัวอย่าง") : "ยังไม่ได้เลือก"}</strong></div>
           </div>
-          <p className="onboarding-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>เงินเดือนจะใช้แสดงในหน้านี้ชั่วคราวเท่านั้น สลิปยังไม่ได้อัปโหลดหรือบันทึก ไม่มีการสร้างรายการการเงินจากขั้นตอนนี้</span></p>
+          <p className="onboarding-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>เงินเดือนจะใช้แสดงในหน้านี้ชั่วคราวเท่านั้น ไฟล์ที่เลือกยังไม่ได้อัปโหลดหรือบันทึก ไม่มีการสร้างรายการการเงินจากขั้นตอนนี้</span></p>
           {saveError && <p className="notice notice-error onboarding-error" role="alert">บันทึกสถานะเริ่มต้นไม่สำเร็จ ลองกดอีกครั้งนะ</p>}
           <div className="onboarding-actions"><button className="button-primary" type="button" disabled={saving} onClick={finishSetup}>{saving ? "กำลังเตรียมพื้นที่…" : "ไปดูภาพรวม"} {!saving && <ArrowRight size={16} aria-hidden="true" />}</button><button className="button-secondary" type="button" disabled={saving} onClick={() => setStep(2)}><ArrowLeft size={15} aria-hidden="true" /> ย้อนกลับ</button></div>
         </>}
