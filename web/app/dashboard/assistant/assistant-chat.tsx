@@ -5,7 +5,7 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
-import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, type TransactionProposal } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, parseReplySuggestions, type TransactionProposal } from "@/lib/finance/assistant-actions";
 import { buildAssistantHistory } from "@/lib/finance/assistant-history";
 
 type MonthOption = { key: string; label: string };
@@ -19,7 +19,15 @@ type ProposalCard = {
   error?: string;
 };
 type ChatAttachment = { name: string; dataUrl: string; sizeBytes: number };
-type ChatMessage = { role: "user" | "assistant"; content: string; completed?: boolean; attachments?: ChatAttachment[]; context?: { year: string; month: string; transactionCount: number; taxRecordCount: number; taxLookupPerformed: boolean } | null; proposals?: ProposalCard[] };
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  completed?: boolean;
+  attachments?: ChatAttachment[];
+  context?: { year: string; month: string; transactionCount: number; taxRecordCount: number; taxLookupPerformed: boolean } | null;
+  proposals?: ProposalCard[];
+  replySuggestions?: string[];
+};
 type Props = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
 type Mood = "idle" | "listening" | "thinking" | "talking" | "done" | "error" | "comic";
 type SpeechResult = { transcript: string };
@@ -251,6 +259,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         proposal?: TransactionProposal | null;
         edit?: unknown;
         navigation?: unknown;
+        replySuggestions?: unknown;
         context?: ChatMessage["context"];
       } | null = null;
       setMessages([...next, { role: "assistant", content: "" }]);
@@ -306,6 +315,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         completed: true,
         context: completion.context ?? null,
         proposals,
+        replySuggestions: parseReplySuggestions(completion.replySuggestions),
       }]);
       setMood(expenseMoments.current >= 2 && (currentAttachments.length || hasExpenseProposal) ? "comic" : "talking");
       idleTimer.current = setTimeout(() => setMood("idle"), 3200);
@@ -332,8 +342,8 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     const items = messages.flatMap((message, index) => (message.proposals ?? [])
       .filter((card) => card.status === eligibleStatus)
       .map((card) => ({ card, index })));
-    const addReply = (content: string) => setMessages((current) => [
-      ...current, { role: "assistant", content, completed: true },
+    const addReply = (content: string, replySuggestions?: string[]) => setMessages((current) => [
+      ...current, { role: "assistant", content, completed: true, replySuggestions },
     ]);
     setMessages((current) => [...current, { role: "user", content: text }]);
     setDraft("");
@@ -391,7 +401,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         saved.length ? `บันทึกแล้ว ${saved.length} รายการ (${numbers(saved)}) ครับ` : "",
         duplicates.length ? `พบรายการซ้ำ ${numbers(duplicates)} ถ้าเป็นคนละรายการจริง ให้พิมพ์ “บันทึกซ้ำ”` : "",
         failed.length ? `บันทึก ${numbers(failed)} ไม่สำเร็จครับ ดูรายละเอียดที่การ์ดได้เลย` : "",
-      ].filter(Boolean).join("\n"));
+      ].filter(Boolean).join("\n"), saved.length ? ["เปิดหน้ารายการ"] : undefined);
       setMood(failed.length ? "error" : "done");
       idleTimer.current = setTimeout(() => setMood("idle"), 2200);
       if (saved.length) router.refresh();
@@ -410,8 +420,11 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
 
   function editProposal(index: number, proposalId: string) {
     const card = messages[index]?.proposals?.find((item) => item.id === proposalId);
-    if (!card) return;
-    setDraft(`แก้รายการ #${card.number} `);
+    if (card) prepareDraft(`แก้รายการ #${card.number} `);
+  }
+
+  function prepareDraft(text: string) {
+    setDraft(text);
     requestAnimationFrame(() => {
       const input = inputRef.current;
       input?.focus();
@@ -516,8 +529,13 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
 
   const draftNavigation = attachments.length === 0 ? parseNavigationRequest(draft) : null;
   const draftConfirmation = attachments.length === 0 && (isBatchConfirmation(draft) || isDuplicateConfirmation(draft));
-  const pendingCount = messages.reduce((count, message) =>
-    count + (message.proposals?.filter(({ status }) => status === "pending").length ?? 0), 0);
+  const pending = messages.flatMap(({ proposals }) => (proposals ?? []).filter(({ status }) => status === "pending"));
+  const pendingCount = pending.length;
+  const lastMessage = messages.at(-1);
+  const quickReplies = lastMessage?.role === "assistant" && lastMessage.completed
+    ? lastMessage.replySuggestions ?? []
+    : [];
+  const quickRepliesDisabled = busy || preparingAttachment || attachments.length > 0 || draft.trim().length > 0;
 
   return <div className={`assistant-layout${compact ? " assistant-chat-compact" : ""}${home ? " assistant-chat-home" : ""}`}>
     {!compact && <section className={`assistant-companion panel${home ? " assistant-home-companion" : ""}`} aria-label="คุยกับน้องเป๋าวีน">
@@ -556,6 +574,21 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       </div>
 
       {!messages.length && <div className="assistant-suggestions" aria-label="คำถามแนะนำ">{suggestions.map(({ label, prompt }) => <button type="button" key={label} disabled={!ready || busy} onClick={() => void sendMessage(prompt)}>{label}<ArrowUp size={13} aria-hidden="true" /></button>)}</div>}
+      {Boolean(pendingCount || quickReplies.length) && <div className="assistant-suggestions assistant-quick-replies" role="group" aria-label="คำตอบแนะนำ">
+        {pendingCount > 0 && <>
+          <button type="button" disabled={quickRepliesDisabled} onClick={() => void sendMessage("ยืนยันทั้งหมด")}>
+            <Check size={13} aria-hidden="true" /> ยืนยันทั้งหมด ({pendingCount})
+          </button>
+          <button type="button" disabled={!ready || quickRepliesDisabled} onClick={() => prepareDraft(
+            pendingCount === 1 ? `แก้ยอดรายการ #${pending[0].number} เป็น ` : "แก้ยอดรายการ #",
+          )}>
+            แก้ยอดรายการ
+          </button>
+        </>}
+        {quickReplies.map((reply) => <button type="button" key={reply} disabled={quickRepliesDisabled || (!ready && !parseNavigationRequest(reply))} onClick={() => void sendMessage(reply)}>
+          {reply}<ArrowUp size={13} aria-hidden="true" />
+        </button>)}
+      </div>}
       {error && <p className="notice notice-error assistant-error" role="alert">{error}</p>}
 
       <div className="assistant-consent">
@@ -572,7 +605,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         <button className="button-primary assistant-send" type="submit" aria-label="ส่งข้อความ" disabled={busy || preparingAttachment || (!draft.trim() && !attachments.length) || (!ready && !draftNavigation && !draftConfirmation)}>{busy ? <LoaderCircle size={18} className="assistant-spinner" aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}</button>
       </form>
       <div className="assistant-composer-foot">
-        <span>{pendingCount ? `${pendingCount} รายการรอบันทึก · พิมพ์ “ยืนยัน” เพื่อบันทึกทั้งหมด` : ready ? null : <>AI ปิดอยู่ · คำสั่งนำทางยังใช้ได้ · ไปที่ <a href="/dashboard/settings">ตั้งค่า</a> เพื่อเปิด AI</>}</span><span>{draft.length}/4000</span>
+        <span>{ready ? null : <>AI ปิดอยู่ · คำสั่งนำทางยังใช้ได้ · ไปที่ <a href="/dashboard/settings">ตั้งค่า</a> เพื่อเปิด AI</>}</span><span>{draft.length}/4000</span>
       </div>
     </section>
     {voiceDialogOpen && <div className="voice-consent-backdrop" role="presentation"><section className="voice-consent-dialog" role="dialog" aria-modal="true" aria-labelledby="voice-consent-title">

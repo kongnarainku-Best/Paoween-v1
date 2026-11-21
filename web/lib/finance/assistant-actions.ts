@@ -43,3 +43,16 @@ export function isDuplicateConfirmation(message: string) {
   const text = message.normalize("NFKC").replace(/[\s.!。！]+/gu, "");
   return /^(?:ยืนยัน)?บันทึกซ้ำ(?:ทั้งหมด)?(?:เลย)?(?:ครับ|คะ|ค่ะ)?$/u.test(text);
 }
+
+export function parseReplySuggestions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const replies = new Set<string>();
+  for (const candidate of value) {
+    if (typeof candidate !== "string") continue;
+    const reply = candidate.trim().replace(/\s+/gu, " ");
+    if (!reply || reply.length > 80 || isBatchConfirmation(reply) || isDuplicateConfirmation(reply)) continue;
+    replies.add(reply);
+    if (replies.size === 3) break;
+  }
+  return [...replies];
+}

@@ -768,6 +768,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 .assistant-chat-home .assistant-empty { min-height: 135px; }
 .assistant-chat-home .assistant-suggestions { gap: 6px; }
 .assistant-chat-home .assistant-suggestions button { min-height: 32px; font-size: 9px; }
+.assistant-suggestions.assistant-quick-replies button { min-height: 44px; padding-inline: 12px; font-size: 12px; text-align: start; }
+.assistant-quick-replies button svg { flex: 0 0 auto; }
 .assistant-chat-home .assistant-consent { padding: 8px 9px; }
 .assistant-chat-home .assistant-consent p { font-size: 9px; }
 .assistant-chat-home .assistant-composer { margin-top: 7px; padding: 7px; }

@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
-import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, proposalSchema } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseReplySuggestions, proposalSchema } from "@/lib/finance/assistant-actions";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
@@ -37,6 +37,7 @@ const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
   transaction_proposals: z.array(proposalSchema).max(5),
   navigation: assistantNavigationSchema.nullish(),
+  reply_suggestions: z.unknown().optional(),
   draft_edit: z.object({
     number: draftNumberSchema,
     changes: z.record(z.string(), z.unknown()),
@@ -457,6 +458,7 @@ export async function POST(request: Request) {
               proposals: change ? [] : proposals,
               navigation: structured.navigation ?? null,
               edit,
+              replySuggestions: change && !edit ? [] : parseReplySuggestions(structured.reply_suggestions),
               context: includedFinanceData ? { year, month, transactionCount, taxRecordCount, taxLookupPerformed } : null,
               usage: { inputTokens, outputTokens },
             });
