@@ -6,13 +6,15 @@ import { createTransactionAction, updateTransactionAction } from "@/app/dashboar
 import { PocketSelect } from "@/app/dashboard/pockets/pocket-fields";
 import { pocketLabel, type PocketOption } from "@/lib/finance/pocket";
 import { emptyFinanceFormState } from "@/lib/finance/form-state";
+import { readMonthlySalary } from "@/lib/finance/monthly-salary";
 import { transactionCategories, transactionTypeLabels, type TransactionInput } from "@/lib/finance/validation";
 
 type TransactionRecord = TransactionInput & { id: string };
 
-export function TransactionForm({ record, initialType, submissionId, pockets, today }: {
+export function TransactionForm({ record, initialType, salaryForUser, submissionId, pockets, today }: {
   record?: TransactionRecord;
   initialType?: TransactionInput["transaction_type"];
+  salaryForUser?: string;
   submissionId?: string;
   pockets: PocketOption[];
   today: string;
@@ -21,16 +23,28 @@ export function TransactionForm({ record, initialType, submissionId, pockets, to
   const [state, formAction, pending] = useActionState(action, emptyFinanceFormState);
   const errorRef = useRef<HTMLDivElement>(null);
   const [fields, setFields] = useState({
-    transaction_date: record?.transaction_date ?? today,
-    transaction_type: record?.transaction_type ?? initialType ?? "expense",
-    description: record?.description ?? "",
+    transaction_date: record?.transaction_date ?? (salaryForUser ? "" : today),
+    transaction_type: record?.transaction_type ?? (salaryForUser ? "income" : initialType ?? "expense"),
+    description: record?.description ?? (salaryForUser ? "เงินเดือน" : ""),
     amount_thb: record?.amount_thb?.toString() ?? "",
-    category: record?.category ?? "",
+    category: record?.category ?? (salaryForUser ? "Salary" : ""),
     action: record?.action ?? "",
     investment_direction: record?.investment_direction ?? "",
     pocket_id: record?.pocket_id ?? "",
     destination_pocket_id: record?.destination_pocket_id ?? "",
   });
+
+  useEffect(() => {
+    if (!salaryForUser) return;
+    try {
+      const monthlySalary = readMonthlySalary(salaryForUser);
+      if (monthlySalary !== null) {
+        setFields((current) => current.amount_thb === "" ? { ...current, amount_thb: String(monthlySalary) } : current);
+      }
+    } catch {
+      // The amount remains editable when browser storage is unavailable.
+    }
+  }, [salaryForUser]);
 
   function change(field: keyof typeof fields, value: string) {
     setFields((current) => ({
@@ -44,9 +58,10 @@ export function TransactionForm({ record, initialType, submissionId, pockets, to
 
   return <form className="form-card" action={formAction} noValidate>
     {record ? <input type="hidden" name="id" value={record.id} /> : <input type="hidden" name="submission_id" value={submissionId} />}
+    {salaryForUser && <input type="hidden" name="return_to" value="overview" />}
     {state.error && <div className="form-error-summary" role="alert" tabIndex={-1} ref={errorRef}><strong>บันทึกไม่สำเร็จ</strong><p>{state.error}</p></div>}
     <div className="form-grid">
-      <Field label="วันที่" name="transaction_date" error={state.fieldErrors.transaction_date}>
+      <Field label={salaryForUser ? "วันที่ได้รับเงิน" : "วันที่"} name="transaction_date" error={state.fieldErrors.transaction_date}>
         <input id="transaction_date" name="transaction_date" type="date" value={fields.transaction_date} onChange={(event) => change("transaction_date", event.target.value)} required aria-invalid={!!state.fieldErrors.transaction_date} aria-describedby={state.fieldErrors.transaction_date ? "error-transaction_date" : undefined} />
       </Field>
       <Field label="ประเภทรายการ" name="transaction_type" error={state.fieldErrors.transaction_type}>
@@ -82,7 +97,7 @@ export function TransactionForm({ record, initialType, submissionId, pockets, to
       </Field>
     </div>
     {state.duplicate && <label className="check-row duplicate-confirm"><input type="checkbox" name="allow_duplicate" value="yes" /> ฉันตรวจแล้วและต้องการบันทึกรายการนี้แม้รายละเอียดจะซ้ำ</label>}
-    <div className="form-actions"><a className="button-secondary" href="/dashboard/transactions">ยกเลิก</a><button className="button-primary" type="submit" disabled={pending}>{pending ? "กำลังบันทึก…" : record ? "บันทึกการแก้ไข" : "บันทึกรายการ"}</button></div>
+    <div className="form-actions"><a className="button-secondary" href={salaryForUser ? "/dashboard" : "/dashboard/transactions"}>ยกเลิก</a><button className="button-primary" type="submit" disabled={pending}>{pending ? "กำลังบันทึก…" : record ? "บันทึกการแก้ไข" : "บันทึกรายการ"}</button></div>
   </form>;
 }
 

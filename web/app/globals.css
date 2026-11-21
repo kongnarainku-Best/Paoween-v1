@@ -293,7 +293,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 .monthly-salary-heading strong { color: var(--ink); font-size: 20px; font-variant-numeric: tabular-nums; }
 .monthly-salary-form { align-items: flex-end; margin-top: 12px; }
 .monthly-salary-form .form-field { flex: 0 1 220px; }
-.monthly-salary button { min-height: 44px; }
+.monthly-salary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.monthly-salary button, .monthly-salary-actions a { min-height: 44px; }
 .dashboard-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); align-items: start; gap: 15px; margin-top: 19px; }
 .panel { min-width: 0; padding: 21px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }

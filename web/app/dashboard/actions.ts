@@ -63,18 +63,21 @@ export async function createTransactionAction(_state: FinanceFormState, formData
   const { supabase, userId } = await getSignedInUser();
   const parsed = transactionSchema.safeParse(transactionData(formData));
   if (!parsed.success) return stateFromIssues(parsed.error.issues);
+  const successPath = readFormString(formData, "return_to") === "overview" && parsed.data.transaction_type === "income"
+    ? "/dashboard?saved=income"
+    : "/dashboard/transactions?saved=created";
 
   const id = readFormString(formData, "submission_id");
   if (!zodUuid(id)) return { error: "ฟอร์มหมดอายุ กรุณาโหลดหน้าใหม่", fieldErrors: {} };
   const findSubmission = () => supabase.from("transactions").select("id").eq("user_id", userId).eq("id", id).maybeSingle();
   const existing = await findSubmission();
   if (existing.error) return { error: "ตรวจสอบรายการเดิมไม่สำเร็จ กรุณาลองอีกครั้ง", fieldErrors: {} };
-  if (existing.data) redirect("/dashboard/transactions?saved=created");
+  if (existing.data) redirect(successPath);
 
   const duplicate = await isDuplicateTransaction(supabase, userId, parsed.data);
   if (duplicate.error) return { error: "ตรวจรายการซ้ำไม่สำเร็จ กรุณาลองอีกครั้ง", fieldErrors: {} };
   if (duplicate.data && readFormString(formData, "allow_duplicate") !== "yes") {
-    if ((await findSubmission()).data) redirect("/dashboard/transactions?saved=created");
+    if ((await findSubmission()).data) redirect(successPath);
     return { error: "พบรายการที่มีวัน ประเภท จำนวนเงิน และคำอธิบายตรงกัน กรุณาตรวจสอบก่อนบันทึกซ้ำ", fieldErrors: {}, duplicate: true };
   }
 
@@ -86,11 +89,11 @@ export async function createTransactionAction(_state: FinanceFormState, formData
   });
   if (error?.code === "23505" && (await findSubmission()).data) {
     revalidatePath("/dashboard", "layout");
-    redirect("/dashboard/transactions?saved=created");
+    redirect(successPath);
   }
   if (error) return { error: "บันทึกรายการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองอีกครั้ง", fieldErrors: {} };
   revalidatePath("/dashboard", "layout");
-  redirect("/dashboard/transactions?saved=created");
+  redirect(successPath);
 }
 
 export async function updateTransactionAction(_state: FinanceFormState, formData: FormData): Promise<FinanceFormState> {

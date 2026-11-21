@@ -18,7 +18,8 @@ type DashboardTrendRow = {
 };
 type TaxPreview = { id: string; record_type: string; tax_category: string; amount_thb: number | string | null; review_status: string };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ saved?: string }> }) {
+  const { saved } = await searchParams;
   const { supabase, userId, claims } = await getSignedInUser();
   const onboardingScope = onboardingSessionScope(userId, claims);
   const months = getRecentBangkokMonths(7);
@@ -85,6 +86,7 @@ export default async function DashboardPage() {
       </div>
     </section>
 
+    {saved === "income" && <p className="notice notice-success" role="status">บันทึกรายรับแล้ว</p>}
     <section className="metric-grid" aria-label="สรุปรายการเดือนนี้">
       <Metric label="รายรับ" value={trendResult.failed ? null : sums.income} accent="green" icon={<ArrowDownLeft size={17} aria-hidden="true" />} />
       <Metric label="รายจ่าย" value={trendResult.failed ? null : sums.expense} accent="amber" icon={<ArrowUpRight size={17} aria-hidden="true" />} />

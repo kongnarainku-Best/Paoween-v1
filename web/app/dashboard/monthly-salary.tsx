@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { monthlySalaryInputError, monthlySalaryStorageError, monthlySalaryStorageKey, parseMonthlySalary, setMonthlySalary } from "@/lib/finance/monthly-salary";
+import { monthlySalaryInputError, monthlySalaryStorageError, monthlySalaryStorageKey, parseMonthlySalary, readMonthlySalary, setMonthlySalary } from "@/lib/finance/monthly-salary";
 
 const formatAmount = new Intl.NumberFormat("th-TH", { maximumFractionDigits: 2 });
 
@@ -18,7 +19,7 @@ export function MonthlySalary({ userId }: { userId: string }) {
 
     function read() {
       try {
-        setAmount(parseMonthlySalary(window.localStorage.getItem(key) ?? ""));
+        setAmount(readMonthlySalary(userId));
       } catch {
         setError(monthlySalaryStorageError);
       }
@@ -65,14 +66,17 @@ export function MonthlySalary({ userId }: { userId: string }) {
         <h2 id="monthly-salary-heading">เงินเดือนสุทธิต่อเดือน</h2>
         <p aria-live="polite">{typeof amount === "number" ? <><strong>{formatAmount.format(amount)}</strong> บาท / เดือน</> : amount === null ? "ยังไม่ได้ระบุ" : "—"}</p>
       </div>
-      {amount !== undefined && <button ref={editButton} className="button-secondary" type="button" aria-expanded={editing} onClick={() => {
-        if (editing) {
-          closeEditor();
-          return;
-        }
-        setInput(amount === null ? "" : String(amount));
-        setEditing(true);
-      }}>{editing ? "ปิด" : amount === null ? "ใส่เงินเดือน" : "แก้ไขเงินเดือน"}</button>}
+      {amount !== undefined && <div className="monthly-salary-actions">
+        {typeof amount === "number" && !editing && <Link className="button-primary" href="/dashboard/transactions/new?from=salary">บันทึกเป็นรายรับ</Link>}
+        <button ref={editButton} className="button-secondary" type="button" aria-expanded={editing} onClick={() => {
+          if (editing) {
+            closeEditor();
+            return;
+          }
+          setInput(amount === null ? "" : String(amount));
+          setEditing(true);
+        }}>{editing ? "ปิด" : amount === null ? "ใส่เงินเดือน" : "แก้ไขเงินเดือน"}</button>
+      </div>}
     </div>
     <p className="monthly-salary-note" id="monthly-salary-note">ยอดอ้างอิงสำหรับวางแผน แยกจากรายรับที่บันทึกแล้ว เก็บเฉพาะในเบราว์เซอร์นี้</p>
     {editing && <form className="monthly-salary-form" onSubmit={onSubmit}>

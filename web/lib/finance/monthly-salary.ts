@@ -12,6 +12,10 @@ export function monthlySalaryStorageKey(userId: string) {
   return `paoween:monthly-net-salary:${userId}`;
 }
 
+export function readMonthlySalary(userId: string) {
+  return parseMonthlySalary(window.localStorage.getItem(monthlySalaryStorageKey(userId)) ?? "");
+}
+
 export function setMonthlySalary(userId: string, amount: number | null) {
   const key = monthlySalaryStorageKey(userId);
   if (amount === null) window.localStorage.removeItem(key);
