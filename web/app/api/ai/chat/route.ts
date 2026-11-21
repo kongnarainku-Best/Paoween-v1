@@ -286,9 +286,17 @@ export async function POST(request: Request) {
   const validatedImages = [...imageSet];
 
   const supabase = await createClient();
-  const { data: authData, error: authError } = await supabase.auth.getClaims();
-  const userId = authData?.claims?.sub;
-  if (authError || typeof userId !== "string") return Response.json({ error: "Sign in to continue." }, { status: 401 });
+  // A signed JWT can outlive its user record, which the AI usage reservation references.
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const userId = authData?.user?.id;
+  if (authError || !userId) {
+    const unavailable = (authError?.status ?? 0) >= 500;
+    console.warn("[paoween-ai] account verification failed", { authCode: authError?.code ?? null });
+    return Response.json({ error: unavailable
+      ? "ระบบยืนยันบัญชีขัดข้องชั่วคราว ลองอีกครั้งครับ"
+      : "เซสชันนี้ใช้กับ AI ไม่ได้แล้ว กรุณาออกจากระบบแล้วเข้าสู่ระบบ Google อีกครั้งครับ" },
+    { status: unavailable ? 503 : 401 });
+  }
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-6-luna";
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -367,14 +375,27 @@ export async function POST(request: Request) {
     p_estimated_input_tokens: Math.max(1, estimatedInputTokens),
   });
 
-  if (reservationError) {
-    const reason = reservationError.message.includes("AI_DISABLED") ? "AI budget policy has not been enabled yet." :
-      reservationError.message.includes("USER_DAILY_LIMIT") ? "You have reached today's AI limit." :
-      reservationError.message.includes("GLOBAL_DAILY_LIMIT") ? "AI is temporarily unavailable for today." :
-      reservationError.message.includes("INPUT_LIMIT") ? "This message and selected context exceed the current AI limit." :
-      "AI budget limits are not configured yet.";
-    const status = reason.includes("limit") || reason.includes("today") ? 429 : 503;
-    return Response.json({ error: reason }, { status });
+  const maxOutputTokens = reservation?.max_output_tokens;
+  if (reservationError || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    const message = reservationError?.message ?? "";
+    const reasons = [
+      { code: "AI_DISABLED", error: "ระบบ AI ปิดอยู่ กรุณาตรวจสถานะในหน้าตั้งค่า", status: 503 },
+      { code: "MODEL_NOT_CONFIGURED", error: "โมเดล AI ยังไม่ได้ตั้งเรตราคา กรุณาตรวจในหน้าตั้งค่า", status: 503 },
+      { code: "USER_DAILY_LIMIT", error: "บัญชีนี้ใช้ AI ครบโควตาวันนี้แล้ว", status: 429 },
+      { code: "GLOBAL_DAILY_LIMIT", error: "แอปใช้งบ AI ครบสำหรับวันนี้แล้ว", status: 429 },
+      { code: "INPUT_LIMIT", error: "ข้อความและภาพแนบเกินขนาดที่ AI รับได้ ลองส่งภาพทีละน้อยหรือเริ่มแชตใหม่ครับ", status: 413 },
+    ];
+    const reason = reasons.find(({ code }) => message === code);
+    console.warn("[paoween-ai] reservation failed", {
+      requestId, model, databaseCode: reservationError?.code ?? null,
+      missingUsageUser: message.includes("ai_usage_events_user_id_fkey"),
+      reason: reason?.code ?? (reservationError ? "RPC_ERROR" : "INVALID_RESERVATION"),
+      estimatedInputTokens,
+    });
+    return Response.json({
+      error: reason?.error ?? "ระบบจองโควตา AI ขัดข้องชั่วคราว ลองส่งใหม่อีกครั้งครับ",
+      requestId,
+    }, { status: reason?.status ?? 503 });
   }
 
   try {
@@ -397,9 +418,9 @@ export async function POST(request: Request) {
             const responseStream = client.responses.stream({
               model,
               store: false,
-              reasoning: { effort: "medium" },
+              reasoning: { effort: validatedImages.length ? "medium" : "low" },
               input,
-              max_output_tokens: reservation.max_output_tokens,
+              max_output_tokens: maxOutputTokens,
               text: { format: { type: "json_schema", name: "paoween_finance_reply", strict: true, schema: assistantOutputSchema } },
             }, { signal: localAbortController.signal });
             let lastReply = "";
@@ -414,7 +435,8 @@ export async function POST(request: Request) {
               }
             }
             const result = await responseStream.finalResponse();
-            if (result.status !== "completed") {
+            const outputCapped = result.status === "incomplete" && result.incomplete_details?.reason === "max_output_tokens";
+            if (result.status !== "completed" && !outputCapped) {
               console.error("[paoween-ai] provider response did not complete", {
                 requestId,
                 model,
@@ -443,6 +465,14 @@ export async function POST(request: Request) {
             });
             if (finalizeError) {
               send("error", { error: "สร้างคำตอบแล้ว แต่บันทึก usage ไม่สำเร็จ จึงคงวงเงินสำรองไว้", requestId });
+              return;
+            }
+
+            if (outputCapped) {
+              console.warn("[paoween-ai] provider reached output cap", { requestId, model, outputTokens, maxOutputTokens });
+              send("error", { error: validatedImages.length
+                ? "เป๋าวีนอ่านรายละเอียดไม่จบในรอบนี้ ลองแนบภาพให้น้อยลงหรือระบุจุดที่อยากให้ดูครับ"
+                : "เป๋าวีนตอบไม่จบในรอบนี้ ลองถามทีละเรื่องหรือขอคำตอบสั้น ๆ ครับ", requestId });
               return;
             }
 
