@@ -20,7 +20,7 @@ export default function AssistantPage() {
     </section>
     <section className="assistant-page-hint panel">
       <span className="assistant-page-hint-icon"><MessageCircle size={19} aria-hidden="true" /></span>
-      <div><h2>เริ่มจากเรื่องที่อยากรู้</h2><p>เช่น “ช่วยสรุปรายจ่ายเดือนนี้” หรือ “มีอะไรที่ควรเตรียมก่อนยื่นภาษี” · เป๋าวีนจะร่างคำตอบให้ และรายการใหม่จะบันทึกก็ต่อเมื่อคุณตรวจและยืนยัน</p></div>
+      <div><h2>สั่งงานเป๋าวีนผ่านแชต</h2><p>ลอง “พาไปดูรายจ่ายเดือนที่แล้ว” หรือแนบสลิปแล้วพิมพ์ “แก้ยอดรายการ #2 เป็น 350 บาท” เมื่อพร้อมบันทึกทั้งหมด พิมพ์ “ยืนยัน” ครั้งเดียว</p></div>
     </section>
     <footer className="workspace-footer">ใช้แชตมุมขวาล่างได้จากทุกหน้า · การตั้งค่า AI อยู่ในเมนูตั้งค่า</footer>
   </div>;

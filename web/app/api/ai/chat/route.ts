@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
+import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, proposalSchema } from "@/lib/finance/assistant-actions";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
@@ -18,6 +19,11 @@ const bodySchema = z.object({
   includeFinanceData: z.boolean().default(false),
   images: z.array(z.string().max(700_000)).max(5).optional(),
   imageDataUrl: z.string().max(3_000_000).optional(),
+  conversationItems: z.array(z.object({
+    number: draftNumberSchema,
+    status: z.enum(["pending", "duplicate", "saved"]),
+    proposal: proposalSchema,
+  }).strict()).max(20).optional(),
   history: z.array(z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string().min(1).max(assistantHistoryMaxMessageLength),
@@ -27,18 +33,14 @@ const bodySchema = z.object({
 }).strict().refine((body) => !(body.images?.length && body.imageDataUrl)
   && (body.images ?? (body.imageDataUrl ? [body.imageDataUrl] : [])).reduce((size, image) => size + image.length, 0) <= 3_200_000);
 
-const transactionProposalValidator = z.object({
-  transaction_date: z.string().max(20),
-  transaction_type: z.enum(["income", "expense", "investment", "transfer"]),
-  description: z.string().max(240),
-  amount_thb: z.string().max(32),
-  category: z.string().max(80),
-  action: z.string().max(240),
-}).strict();
-
 const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
-  transaction_proposals: z.array(transactionProposalValidator).max(5),
+  transaction_proposals: z.array(proposalSchema).max(5),
+  navigation: assistantNavigationSchema.nullish(),
+  draft_edit: z.object({
+    number: draftNumberSchema,
+    changes: z.record(z.string(), z.unknown()),
+  }).strict().nullish(),
 }).strict();
 
 type AssistantOutput = z.infer<typeof assistantOutputValidator>;
@@ -323,6 +325,7 @@ export async function POST(request: Request) {
     date: bangkokToday(),
     scopeLabel,
     accountContext: context,
+    conversationItems: parsed.data.conversationItems === undefined ? undefined : JSON.stringify(parsed.data.conversationItems),
   });
   const input: OpenAI.Responses.ResponseInput = [
     { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
@@ -429,6 +432,17 @@ export async function POST(request: Request) {
               console.warn("[paoween-ai] response schema did not validate", { requestId, model, fallbackReason: parsedOutput.fallbackReason });
             }
             const structured = parsedOutput.output;
+            const change = structured.draft_edit;
+            const target = change && parsed.data.conversationItems?.find((item) => item.number === change.number);
+            const requestedEdit = change && draftEditSchema.safeParse({
+              number: change.number,
+              changes: Object.fromEntries(Object.entries(change.changes).filter(([, value]) => value !== null)),
+            });
+            const edit = requestedEdit && requestedEdit.success && target
+              && Object.keys(requestedEdit.data.changes).length > 0
+              && transactionSchema.safeParse({ ...target.proposal, ...requestedEdit.data.changes }).success
+              ? requestedEdit.data : null;
+            if (change && !edit) structured.reply = "ยังแก้รายการไม่ได้ครับ ลองระบุเลขรายการและข้อมูลที่ต้องการแก้ให้ชัดขึ้น";
             let proposals = structured.transaction_proposals.filter((proposal) => transactionSchema.safeParse(proposal).success);
             if (proposals.length !== structured.transaction_proposals.length) {
               structured.reply += " บางรายการมีข้อมูลไม่ครบหรือรูปแบบไม่ถูกต้อง จึงยังร่างรายการนั้นให้บันทึกไม่ได้";
@@ -440,7 +454,9 @@ export async function POST(request: Request) {
             if (structured.reply !== lastReply) send("replace", { text: structured.reply });
             send("complete", {
               requestId,
-              proposals,
+              proposals: change ? [] : proposals,
+              navigation: structured.navigation ?? null,
+              edit,
               context: includedFinanceData ? { year, month, transactionCount, taxRecordCount, taxLookupPerformed } : null,
               usage: { inputTokens, outputTokens },
             });

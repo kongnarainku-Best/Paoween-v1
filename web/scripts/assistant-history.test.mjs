@@ -46,13 +46,13 @@ test("keeps at most four pairs and caps the serialized history at 4,800 characte
 
 test("includes draft fields and an attachment marker while leaving out image bytes", () => {
   const messages = pair("อ่านสลิปนี้", "ร่างไว้แล้วครับ");
-  messages[0].attachment = { dataUrl: "test bytes" };
+  messages[0].attachments = [{ dataUrl: "test bytes" }];
   messages[1].proposal = {
     transaction_date: "2026-11-20", transaction_type: "expense",
     description: "กาแฟ", amount_thb: "125", category: "Food/Beverage", action: "ทดสอบ",
   };
   const history = buildAssistantHistory(messages, scope);
-  assert.match(history[0].content, /ไม่ได้ส่งภาพนั้นซ้ำ/);
+  assert.match(history[0].content, /ไม่ได้ส่งภาพเหล่านั้นซ้ำ/);
   assert.doesNotMatch(history[0].content, /test bytes/);
   assert.match(history[1].content, /ยอด 125 บาท.*หมายเหตุ ทดสอบ/);
 });
