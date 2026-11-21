@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { z } from "zod";
 
 import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCategoryOptions, parseReplySuggestions, proposalSchema, recordRequestSchema } from "@/lib/finance/assistant-actions";
+import { assistantDraftPockets } from "@/lib/finance/pocket";
+import { listPocketOptions } from "@/lib/finance/pocket-server";
 import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
@@ -38,7 +40,11 @@ const bodySchema = z.object({
 
 const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
-  transaction_proposals: z.array(proposalSchema.extend({ category_options: z.unknown().optional() })).max(5),
+  transaction_proposals: z.array(proposalSchema.extend({
+    category_options: z.unknown().optional(),
+    pocket_hint: z.string().max(160).nullish(),
+    destination_hint: z.string().max(160).nullish(),
+  })).max(5),
   navigation: assistantNavigationSchema.nullish(),
   record_request: recordRequestSchema.nullish(),
   reply_suggestions: z.unknown().optional(),
@@ -456,7 +462,10 @@ export async function POST(request: Request) {
               && transactionDraftSchema.safeParse({ ...target.proposal, ...requestedEdit.data.changes }).success
               ? requestedEdit.data : null;
             if (change && !edit) structured.reply = "ยังแก้รายการไม่ได้ครับ ลองระบุเลขรายการและข้อมูลที่ต้องการแก้ให้ชัดขึ้น";
-            const candidates = (change ? [] : structured.transaction_proposals).flatMap(({ category_options, ...proposal }) => {
+            const drafts = change ? [] : structured.transaction_proposals;
+            const pockets = drafts.length ? await listPocketOptions(supabase, userId) : [];
+            const candidates = drafts.flatMap(({ category_options, pocket_hint, destination_hint, ...fields }) => {
+              const proposal = { ...fields, ...assistantDraftPockets(pockets, fields.transaction_type, pocket_hint, destination_hint) };
               const transaction = transactionDraftSchema.safeParse(proposal);
               if (!transaction.success) return [];
               const options = validatedImages.length ? parseCategoryOptions(category_options) : [];
@@ -466,7 +475,7 @@ export async function POST(request: Request) {
             if (!change && candidates.length !== structured.transaction_proposals.length) {
               structured.reply += " บางรายการมีข้อมูลไม่ครบหรือรูปแบบไม่ถูกต้อง จึงยังร่างรายการนั้นให้บันทึกไม่ได้";
             }
-            const matches = await Promise.all(candidates.map(({ transaction }) => findAssistantDuplicate(supabase, userId, transaction)));
+            const matches = await Promise.all(candidates.map(({ transaction }) => findAssistantDuplicate(supabase, userId, transaction, undefined, Boolean(transaction.pocket_id || transaction.destination_pocket_id))));
             const seen = new Set<string>();
             const duplicates = [];
             const available = [];

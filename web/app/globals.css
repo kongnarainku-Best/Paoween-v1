@@ -764,10 +764,16 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 .dashboard-home .dashboard-columns { grid-template-columns: minmax(0, 1fr); }
 .dashboard-home .panel { padding: 17px; }
 .assistant-chat-home { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; gap: 12px; }
-.assistant-intro { margin: auto; display: grid; justify-items: center; gap: 10px; padding: 12px; text-align: center; }
-.assistant-intro .paoween-stage { width: 112px; height: 108px; }
-.assistant-intro .paoween-status { display: none; }
-.assistant-intro h3 { margin: 0; color: var(--ink); font-size: clamp(20px, 2vw, 26px); line-height: 1.45; text-wrap: balance; }
+.assistant-companion-stage { flex: 0 0 auto; display: grid; align-content: center; justify-items: center; text-align: center; }
+.assistant-companion-stage.is-welcome { flex: 1 1 auto; min-height: 0; gap: 8px; }
+.assistant-companion-stage .paoween-stage { height: clamp(76px, 22dvh, 190px); width: min(100%, 250px); }
+.assistant-companion-stage.is-welcome .paoween-stage { height: clamp(112px, 34dvh, 280px); width: min(100%, 310px); }
+.assistant-companion-stage .paoween-status, .assistant-log.is-empty { display: none; }
+@media (max-height: 480px) {
+  .assistant-companion-stage .paoween-stage { height: 60px; }
+  .assistant-companion-stage.is-welcome .paoween-stage { height: 84px; }
+}
+.assistant-companion-stage h3 { margin: 0; color: var(--ink); font-size: clamp(20px, 2vw, 26px); line-height: 1.45; text-wrap: balance; }
 .assistant-chat-title { flex: 1; }
 .assistant-record-request { display: grid; justify-items: start; gap: 5px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .assistant-record-request span { font-weight: 650; }

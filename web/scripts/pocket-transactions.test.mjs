@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bangkokDate, pocketLabel } from "../lib/finance/pocket.ts";
+import { assistantDraftPockets, bangkokDate, pocketLabel } from "../lib/finance/pocket.ts";
 import { transactionMatchKey } from "../lib/finance/transaction-match.ts";
 import { transactionDraftSchema, transactionSchema } from "../lib/finance/validation.ts";
 
@@ -56,4 +56,18 @@ test("duplicate matching keeps directions and pockets distinct", () => {
 test("an opening day switches at midnight in Bangkok", () => {
   assert.equal(bangkokDate(new Date("2026-11-20T16:59:59Z")), "2026-11-20");
   assert.equal(bangkokDate(new Date("2026-11-20T17:00:00Z")), "2026-11-21");
+});
+
+test("assistant drafts use a unique SCB fallback and respect an explicit pocket", () => {
+  const pockets = [{ id: bank, name: "บัญชี SCB" }, { id: wallet, name: "เงินสด" }];
+  const pick = (type, own, other) => assistantDraftPockets(pockets, type, own, other);
+  assert.equal(pick("expense").pocket_id, bank);
+  assert.equal(pick("income", "ไทยพาณิชย์").pocket_id, bank);
+  assert.equal(pick("expense", "เงินสด").pocket_id, wallet);
+  assert.equal(pick("expense", "KBank").pocket_id, null);
+  assert.deepEqual(pick("transfer", null, "SCB"), { pocket_id: null, destination_pocket_id: bank });
+  assert.deepEqual(pick("transfer", "เงินสด"), { pocket_id: wallet, destination_pocket_id: bank });
+  assert.deepEqual(pick("transfer"), { pocket_id: bank, destination_pocket_id: null });
+  assert.equal(assistantDraftPockets([...pockets, { id: "second", name: "SCB Easy" }], "expense").pocket_id, null);
+  assert.equal(assistantDraftPockets([], "expense").pocket_id, null);
 });

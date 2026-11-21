@@ -616,16 +616,16 @@ export function AssistantChat({ ready, onboardingScope, pockets, home = false, c
   return <div className={`assistant-layout${compact ? " assistant-chat-compact" : ""}${home ? " assistant-chat-home" : ""}`}>
     <section className="assistant-conversation panel" aria-label="บทสนทนากับเป๋าวีน">
       <div className="assistant-conversation-head">
-        {messages.length > 0 && showMascot && <div className="assistant-mini-mascot"><PaoweenStage mood={mood} label={`น้องเป๋าวีน ${status}`} /></div>}
         <div className="assistant-chat-title"><h2>คุยกับเป๋าวีน</h2></div>
         <div className="assistant-conversation-actions">{messages.length > 0 && <button className="assistant-reset" type="button" onClick={resetConversation} disabled={busy} title="เริ่มบทสนทนาใหม่"><RotateCcw size={14} aria-hidden="true" /><span className="sr-only">เริ่มใหม่</span></button>}<span className={`assistant-live${ready ? "" : " is-off"}`}><i />{ready ? "AI พร้อมใช้" : "รอตั้งค่า API"}</span>{onClose && <button className={home ? "assistant-dock-close assistant-dock-close-pinned" : "assistant-dock-close"} type="button" onClick={onClose} aria-label="ปิดแชตกับเป๋าวีน"><X size={17} aria-hidden="true" /></button>}</div>
       </div>
 
-      <div className="assistant-log" ref={logRef} role="log" aria-live="polite" aria-relevant="additions" aria-label="ประวัติการสนทนา">
-        {messages.length === 0 ? <div className="assistant-intro">
-          {showMascot && <PaoweenStage mood={mood} label={`น้องเป๋าวีน ${status}`} />}
-          <h3>วันนี้ให้ช่วยดูเรื่องไหนดี?</h3>
-        </div> : messages.map((message, index) => <article className={`assistant-bubble ${message.role}`} key={`${index}-${message.role}`}>
+      <div className={messages.length ? "assistant-companion-stage" : "assistant-companion-stage is-welcome"}>
+        {showMascot && <PaoweenStage mood={mood} label={`น้องเป๋าวีน ${status}`} />}
+        {!messages.length && <h3>วันนี้ให้ช่วยดูเรื่องไหนดี?</h3>}
+      </div>
+      <div className={messages.length ? "assistant-log" : "assistant-log is-empty"} ref={logRef} role="log" aria-live="polite" aria-relevant="additions" aria-label="ประวัติการสนทนา">
+        {messages.map((message, index) => <article className={`assistant-bubble ${message.role}`} key={`${index}-${message.role}`}>
           <strong>{message.role === "user" ? "คุณ" : "เป๋าวีน"}</strong>
           <p>{message.content}</p>
           {message.attachments?.map((attachment, attachmentIndex) => <img className="assistant-message-image" key={`${attachment.name}-${attachmentIndex}`} src={attachment.dataUrl} alt={`ภาพที่คุณแนบ: ${attachment.name}`} />)}
