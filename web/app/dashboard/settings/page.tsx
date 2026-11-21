@@ -49,7 +49,9 @@ export default async function SettingsPage() {
             {ai.dailyRequestsPerUser === 0
               ? "ไม่จำกัดจำนวนคำขอต่อบัญชีต่อวัน"
               : `ไม่เกิน ${ai.dailyRequestsPerUser} คำขอต่อบัญชีต่อวัน`}
-            {` · งบรวมของแอปสูงสุด $${ai.globalDailySpendLimitUsd.toFixed(2)} ต่อวัน`}
+            {ai.globalDailySpendLimitUsd === 0
+              ? " · ไม่จำกัดงบรวมต่อวัน"
+              : ` · งบรวมของแอปสูงสุด $${ai.globalDailySpendLimitUsd.toFixed(2)} ต่อวัน`}
           </p>
         ) : <p>ยังไม่พบการตั้งค่าโควตาและงบของแอป</p>}
         <small>ค่าใช้จ่ายในแอปเป็นค่าประมาณจากเรตราคาที่ตั้งใน Supabase โปรดตรวจยอดจริงใน OpenAI API Usage</small>
