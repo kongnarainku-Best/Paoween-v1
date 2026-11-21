@@ -25,6 +25,9 @@ const shortReply = (reply) =>
   reply.trim().length <= 150
   && reply.trim().split(/\n+/).length <= 2
   && [...thaiSentences.segment(reply.trim())].length <= 2;
+const proposalsOf = (answer) => Array.isArray(answer.transaction_proposals)
+  ? answer.transaction_proposals
+  : answer.transaction_proposal ? [answer.transaction_proposal] : [];
 const draftMatches = (proposal, amount) =>
   transactionSchema.safeParse(proposal).success
   && Number(proposal.amount_thb) === amount
@@ -33,13 +36,13 @@ const draftMatches = (proposal, amount) =>
   && /กาแฟ.*ร้านตัวอย่าง/.test(proposal.description)
   && proposal.category === draft.category;
 const scalarReply = (answer, pattern) =>
-  answer.transaction_proposal === null && pattern.test(answer.reply) && shortReply(answer.reply);
+  proposalsOf(answer).length === 0 && pattern.test(answer.reply) && shortReply(answer.reply);
 
 const scenarios = [
   { name: "short arithmetic", message: "มีงบ 1,800 บาท ใช้ไป 450 บาท เหลือเท่าไหร่ครับ?", check: (answer) => scalarReply(answer, /1,?350/) },
   { name: "simple explanation", message: "โอนเงินระหว่างบัญชีของตัวเอง นับเป็นรายจ่ายไหม?", check: (answer) => scalarReply(answer, /ไม่นับ|ไม่ถือ|ไม่ใช่/) },
   { name: "no account access", message: "เดือนนี้ผมจ่ายค่าอาหารรวมเท่าไหร่?", check: (answer) => scalarReply(answer, /ยังไม่|ไม่มีข้อมูล|ไม่ได้รับ/) && /แนบ|แชร์|ส่ง/.test(answer.reply) },
-  { name: "details on request", message: "อธิบายวิธีเริ่มจัดงบรายเดือนสำหรับมือใหม่ 3 ข้อ ขอเป็น bullet สั้น ๆ", check: (answer) => answer.transaction_proposal === null && (answer.reply.match(/^\s*(?:[-•]|[1-3][.)])\s+/gm) ?? []).length === 3 },
+  { name: "details on request", message: "อธิบายวิธีเริ่มจัดงบรายเดือนสำหรับมือใหม่ 3 ข้อ ขอเป็น bullet สั้น ๆ", check: (answer) => proposalsOf(answer).length === 0 && (answer.reply.match(/^\s*(?:[-•]|[1-3][.)])\s+/gm) ?? []).length === 3 },
   {
     name: "recall after navigation",
     history: [
@@ -51,12 +54,12 @@ const scenarios = [
     message: "ผมฝากจำคำว่าอะไรครับ?",
     check: (answer) => scalarReply(answer, /เมฆฟ้า\s*27/),
   },
-  { name: "draft from text", message: "ร่างรายการวันที่ 20 พ.ย. 2569 ซื้อกาแฟร้านตัวอย่าง 125 บาท หมวด Food/Beverage ครับ", check: (answer) => draftMatches(answer.transaction_proposal, 125) && shortReply(answer.reply) },
+  { name: "draft from text", message: "ร่างรายการวันที่ 20 พ.ย. 2569 ซื้อกาแฟร้านตัวอย่าง 125 บาท หมวด Food/Beverage ครับ", check: (answer) => draftMatches(proposalsOf(answer)[0], 125) && shortReply(answer.reply) },
   {
     name: "update draft amount",
     history: exchange("ร่างรายการกาแฟร้านตัวอย่าง 125 บาท วันที่ 20 พ.ย. 2569 หมวด Food/Beverage", "ร่างไว้แล้วครับ", { proposal: draft }),
     message: "แก้ยอดร่างเดิมเป็น 135 บาท รายละเอียดอื่นคงเดิม",
-    check: (answer) => draftMatches(answer.transaction_proposal, 135) && shortReply(answer.reply),
+    check: (answer) => draftMatches(proposalsOf(answer)[0], 135) && shortReply(answer.reply),
   },
   { name: "receipt with obscured total", message: "ช่วยอ่านสลิปและร่างรายการนี้ครับ", image: true, check: (answer) => scalarReply(answer, /ยอด|จำนวนเงิน|กี่บาท/) },
 ];
@@ -131,7 +134,7 @@ for (const version of versions) {
       if (pass) passed++;
       console.log(JSON.stringify({
         version: version.name, name: scenario.name, pass, reply: answer.reply,
-        proposal: answer.transaction_proposal, chars: answer.reply.length,
+        proposals: proposalsOf(answer), chars: answer.reply.length,
         firstDeltaMs, totalMs: Math.round(performance.now() - startedAt),
       }));
     } catch (error) {

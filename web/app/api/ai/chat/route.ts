@@ -27,16 +27,18 @@ const bodySchema = z.object({
 }).strict().refine((body) => !(body.images?.length && body.imageDataUrl)
   && (body.images ?? (body.imageDataUrl ? [body.imageDataUrl] : [])).reduce((size, image) => size + image.length, 0) <= 3_200_000);
 
+const transactionProposalValidator = z.object({
+  transaction_date: z.string().max(20),
+  transaction_type: z.enum(["income", "expense", "investment", "transfer"]),
+  description: z.string().max(240),
+  amount_thb: z.string().max(32),
+  category: z.string().max(80),
+  action: z.string().max(240),
+}).strict();
+
 const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
-  transaction_proposal: z.object({
-    transaction_date: z.string().max(20),
-    transaction_type: z.enum(["income", "expense", "investment", "transfer"]),
-    description: z.string().max(240),
-    amount_thb: z.string().max(32),
-    category: z.string().max(80),
-    action: z.string().max(240),
-  }).strict().nullable(),
+  transaction_proposals: z.array(transactionProposalValidator).max(5),
 }).strict();
 
 type AssistantOutput = z.infer<typeof assistantOutputValidator>;
@@ -126,7 +128,18 @@ function parseAssistantOutput(content: string): ParsedAssistantOutput {
       continue;
     }
 
-    const validated = assistantOutputValidator.safeParse(parsed);
+    // Accept the old singular output during rollout, then validate the
+    // normalized result against the strict multi-proposal shape.
+    let normalized = parsed;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const legacy = parsed as Record<string, unknown>;
+      if (!("transaction_proposals" in legacy) && "transaction_proposal" in legacy) {
+        const { transaction_proposal: proposal, ...rest } = legacy;
+        normalized = { ...rest, transaction_proposals: proposal ? [proposal] : [] };
+      }
+    }
+
+    const validated = assistantOutputValidator.safeParse(normalized);
     if (validated.success) return { output: validated.data, fallbackReason: null };
 
     // Preserve useful prose from a partially compliant response, but never turn
@@ -134,7 +147,7 @@ function parseAssistantOutput(content: string): ParsedAssistantOutput {
     const replyOnly = z.object({ reply: z.string().trim().min(1).max(4_000) }).passthrough().safeParse(parsed);
     if (replyOnly.success) {
       return {
-        output: { reply: replyOnly.data.reply, transaction_proposal: null },
+        output: { reply: replyOnly.data.reply, transaction_proposals: [] },
         fallbackReason: "invalid_schema",
       };
     }
@@ -143,21 +156,21 @@ function parseAssistantOutput(content: string): ParsedAssistantOutput {
   const recoveredReply = extractIncompleteReply(candidate);
   if (recoveredReply && recoveredReply.length <= 4_000) {
     return {
-      output: { reply: recoveredReply, transaction_proposal: null },
+      output: { reply: recoveredReply, transaction_proposals: [] },
       fallbackReason: parsedJson ? "invalid_schema" : "invalid_json",
     };
   }
 
-  const looksLikeJson = candidate.startsWith("{") || candidate.startsWith("```") || /\"transaction_proposal\"\s*:/.test(candidate);
+  const looksLikeJson = candidate.startsWith("{") || candidate.startsWith("```") || /\"transaction_proposals?\"\s*:/.test(candidate);
   if (!looksLikeJson && candidate.length > 0 && candidate.length <= 4_000) {
     return {
-      output: { reply: candidate, transaction_proposal: null },
+      output: { reply: candidate, transaction_proposals: [] },
       fallbackReason: parsedJson ? "invalid_schema" : "invalid_json",
     };
   }
 
   return {
-    output: { reply: "เป๋าวีนอ่านคำตอบได้ไม่ครบในรอบนี้ ลองส่งอีกครั้งได้เลยนะ", transaction_proposal: null },
+    output: { reply: "เป๋าวีนอ่านคำตอบได้ไม่ครบในรอบนี้ ลองส่งอีกครั้งได้เลยนะ", transaction_proposals: [] },
     fallbackReason: parsedJson ? "invalid_schema" : "invalid_json",
   };
 }
@@ -416,22 +429,18 @@ export async function POST(request: Request) {
               console.warn("[paoween-ai] response schema did not validate", { requestId, model, fallbackReason: parsedOutput.fallbackReason });
             }
             const structured = parsedOutput.output;
-            let proposal = structured.transaction_proposal;
-            if (proposal && !transactionSchema.safeParse(proposal).success) {
-              proposal = null;
-              structured.reply += " รายการมีข้อมูลไม่ครบหรือรูปแบบไม่ถูกต้อง จึงยังร่างเป็นรายการให้บันทึกไม่ได้";
+            let proposals = structured.transaction_proposals.filter((proposal) => transactionSchema.safeParse(proposal).success);
+            if (proposals.length !== structured.transaction_proposals.length) {
+              structured.reply += " บางรายการมีข้อมูลไม่ครบหรือรูปแบบไม่ถูกต้อง จึงยังร่างรายการนั้นให้บันทึกไม่ได้";
             }
-            if (proposal && /^(?:create|save|add|record|insert|update|delete|expense|income|transfer|investment|purchase|buy|payment)(?:\s+(?:transaction|record|entry|expense|income|transfer))?$/i.test(proposal.action.trim())) proposal.action = "";
-            if (proposal) {
-              const thaiReply = /[\u0E00-\u0E7F]/.test(parsed.data.message);
-              structured.reply = thaiReply
-                ? "ร่างไว้แล้วครับ ตรวจยอดกับวันที่บนการ์ดได้เลย"
-                : "Draft ready. Check the amount and date on the card.";
-            }
+            proposals = proposals.map((proposal) => ({
+              ...proposal,
+              action: /^(?:create|save|add|record|insert|update|delete|expense|income|transfer|investment|purchase|buy|payment)(?:\s+(?:transaction|record|entry|expense|income|transfer))?$/i.test(proposal.action.trim()) ? "" : proposal.action,
+            }));
             if (structured.reply !== lastReply) send("replace", { text: structured.reply });
             send("complete", {
               requestId,
-              proposal,
+              proposals,
               context: includedFinanceData ? { year, month, transactionCount, taxRecordCount, taxLookupPerformed } : null,
               usage: { inputTokens, outputTokens },
             });

@@ -8,6 +8,14 @@ type VisibleMessage = HistoryMessage & {
   completed?: boolean;
   attachments?: object[];
   context?: Scope | null;
+  proposals?: Array<{ proposal: {
+    transaction_date: string;
+    transaction_type: string;
+    description: string;
+    amount_thb: string;
+    category: string;
+    action: string;
+  } }>;
   proposal?: {
     transaction_date: string;
     transaction_type: string;
@@ -19,10 +27,11 @@ type VisibleMessage = HistoryMessage & {
 };
 
 function historyMessage(message: VisibleMessage): HistoryMessage {
-  const { role, content, attachments, proposal } = message;
+  const { role, content, attachments, proposal, proposals } = message;
   const imageNote = attachments?.length ? `\n[มีภาพแนบ ${attachments.length} ภาพในข้อความก่อนหน้า แต่ระบบไม่ได้ส่งภาพเหล่านั้นซ้ำ]` : "";
-  const draftNote = proposal
-    ? `\n[ร่างก่อนหน้า: วันที่ ${proposal.transaction_date}; ประเภท ${proposal.transaction_type}; รายการ ${proposal.description}; ยอด ${proposal.amount_thb} บาท; หมวด ${proposal.category}${proposal.action ? `; หมายเหตุ ${proposal.action}` : ""}]`
+  const priorDrafts = proposals?.map(({ proposal: item }) => item) ?? (proposal ? [proposal] : []);
+  const draftNote = priorDrafts.length
+    ? `\n[ร่างก่อนหน้า ${priorDrafts.map((item, index) => `${index + 1}) วันที่ ${item.transaction_date}; ประเภท ${item.transaction_type}; รายการ ${item.description.slice(0, 80)}; ยอด ${item.amount_thb} บาท; หมวด ${item.category}${item.action ? `; หมายเหตุ ${item.action.slice(0, 50)}` : ""}`).join(" | ")}]`.slice(0, 700)
     : "";
   const maxTextLength = Math.min(600, assistantHistoryMaxMessageLength - imageNote.length - draftNote.length);
   return { role, content: content.slice(-maxTextLength) + imageNote + draftNote };
