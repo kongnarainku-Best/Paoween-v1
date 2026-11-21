@@ -16,6 +16,7 @@ const bodySchema = z.object({
   year: z.union([z.literal("all"), z.string().regex(/^(19|20|21)\d{2}$/)]),
   month: z.union([z.literal("all"), z.string().regex(/^(0[1-9]|1[0-2])$/)]),
   includeFinanceData: z.boolean().default(false),
+  images: z.array(z.string().max(700_000)).max(5).optional(),
   imageDataUrl: z.string().max(3_000_000).optional(),
   history: z.array(z.object({
     role: z.enum(["user", "assistant"]),
@@ -23,7 +24,8 @@ const bodySchema = z.object({
   }).strict()).max(assistantHistoryMaxMessages)
     .refine((history) => history.reduce((length, item) => length + item.content.length, 0) <= assistantHistoryMaxLength)
     .default([]),
-}).strict();
+}).strict().refine((body) => !(body.images?.length && body.imageDataUrl)
+  && (body.images ?? (body.imageDataUrl ? [body.imageDataUrl] : [])).reduce((size, image) => size + image.length, 0) <= 3_200_000);
 
 const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
@@ -235,19 +237,21 @@ export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(rawBody);
   if (!parsed.success) return Response.json({ error: "Check your message and selected period, then try again." }, { status: 400 });
 
-  let imageDataUrl: string | undefined;
-  if (parsed.data.imageDataUrl) {
-    const match = parsed.data.imageDataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
+  const imageDataUrls = parsed.data.images ?? (parsed.data.imageDataUrl ? [parsed.data.imageDataUrl] : []);
+  const validatedImages: string[] = [];
+  for (const imageDataUrl of imageDataUrls) {
+    const match = imageDataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
     if (!match) return Response.json({ error: "แนบได้เฉพาะภาพ JPG, PNG หรือ WebP" }, { status: 400 });
     const imageBytes = Buffer.from(match[2], "base64");
     const mime = match[1];
     const validSignature = mime === "jpeg" ? imageBytes[0] === 0xff && imageBytes[1] === 0xd8 && imageBytes[2] === 0xff
       : mime === "png" ? imageBytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       : imageBytes.toString("ascii", 0, 4) === "RIFF" && imageBytes.toString("ascii", 8, 12) === "WEBP";
-    if (!validSignature || imageBytes.length > 2_200_000 || imageBytes.toString("base64") !== match[2]) {
+    const maxImageBytes = parsed.data.images ? 480_000 : 2_200_000;
+    if (!validSignature || imageBytes.length > maxImageBytes || imageBytes.toString("base64") !== match[2]) {
       return Response.json({ error: "ตรวจสอบภาพไม่ผ่านหรือไฟล์ใหญ่เกินไป ลองเลือกภาพใหม่อีกครั้งนะ" }, { status: 400 });
     }
-    imageDataUrl = parsed.data.imageDataUrl;
+    validatedImages.push(imageDataUrl);
   }
 
   const supabase = await createClient();
@@ -312,13 +316,13 @@ export async function POST(request: Request) {
     ...parsed.data.history.map((item) => ({ role: item.role, content: item.content })),
     {
       role: "user",
-      content: imageDataUrl ? [
+      content: [
         { type: "input_text", text: parsed.data.message },
-        { type: "input_image", image_url: imageDataUrl, detail: "high" },
-      ] : [{ type: "input_text", text: parsed.data.message }],
+        ...validatedImages.map((imageDataUrl) => ({ type: "input_image" as const, image_url: imageDataUrl, detail: "high" as const })),
+      ],
     },
   ];
-  const estimatedInputTokens = Math.ceil((systemPrompt.length + parsed.data.history.reduce((sum, item) => sum + item.content.length, 0) + parsed.data.message.length) * 1.6) + (imageDataUrl ? 6_000 : 0);
+  const estimatedInputTokens = Math.ceil((systemPrompt.length + parsed.data.history.reduce((sum, item) => sum + item.content.length, 0) + parsed.data.message.length) * 1.6) + validatedImages.length * 6_000;
   const requestId = crypto.randomUUID();
   const serviceClient = createServiceClient();
   const { data: reservation, error: reservationError } = await serviceClient.rpc("reserve_ai_request", {

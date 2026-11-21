@@ -10,7 +10,7 @@ import { buildAssistantHistory } from "@/lib/finance/assistant-history";
 type MonthOption = { key: string; label: string };
 type TransactionProposal = { transaction_date: string; transaction_type: "income" | "expense" | "investment" | "transfer"; description: string; amount_thb: string; category: string; action: string };
 type ChatAttachment = { name: string; dataUrl: string; sizeBytes: number };
-type ChatMessage = { role: "user" | "assistant"; content: string; completed?: boolean; attachment?: ChatAttachment; context?: { year: string; month: string; transactionCount: number; taxRecordCount: number; taxLookupPerformed: boolean } | null; proposal?: TransactionProposal | null; proposalId?: string; proposalStatus?: "pending" | "duplicate" | "saved" | "dismissed"; proposalError?: string };
+type ChatMessage = { role: "user" | "assistant"; content: string; completed?: boolean; attachments?: ChatAttachment[]; context?: { year: string; month: string; transactionCount: number; taxRecordCount: number; taxLookupPerformed: boolean } | null; proposal?: TransactionProposal | null; proposalId?: string; proposalStatus?: "pending" | "duplicate" | "saved" | "dismissed"; proposalError?: string };
 type Props = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
 type Mood = "idle" | "listening" | "thinking" | "talking" | "done" | "error" | "comic";
 type SpeechResult = { transcript: string };
@@ -29,7 +29,8 @@ type SpeechRecognitionLike = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
 
 const maxSourceImageBytes = 12 * 1024 * 1024;
-const maxInlineImageBytes = 2_200_000;
+const maxInlineImageBytes = 480_000;
+const maxAttachments = 5;
 const supportedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 function readAsDataUrl(file: Blob) {
@@ -150,7 +151,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   const [month, setMonth] = useState(initialMonth);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [attachment, setAttachment] = useState<ChatAttachment | null>(null);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [preparingAttachment, setPreparingAttachment] = useState(false);
   const [includeFinanceData, setIncludeFinanceData] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -182,10 +183,10 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
   async function sendMessage(messageText: string) {
-    const currentAttachment = attachment;
-    const text = messageText.trim() || (currentAttachment ? "ช่วยดูรายละเอียดในภาพที่แนบมา และถามกลับหากข้อมูลสำคัญยังไม่ชัดเจน" : "");
-    if ((!text && !currentAttachment) || busyRef.current || preparingAttachment) return;
-    const navigation = currentAttachment ? null : parseNavigationRequest(text);
+    const currentAttachments = attachments;
+    const text = messageText.trim() || (currentAttachments.length ? "ช่วยดูรายละเอียดในภาพที่แนบมา และถามกลับหากข้อมูลสำคัญยังไม่ชัดเจน" : "");
+    if ((!text && !currentAttachments.length) || busyRef.current || preparingAttachment) return;
+    const navigation = currentAttachments.length ? null : parseNavigationRequest(text);
     if (navigation) {
       const next = [...messages, { role: "user" as const, content: text }];
       setMessages([...next, {
@@ -208,10 +209,10 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     }
     if (idleTimer.current) clearTimeout(idleTimer.current);
     const previous = messages;
-    const next = [...previous, { role: "user" as const, content: text, ...(currentAttachment ? { attachment: currentAttachment } : {}) }];
+    const next = [...previous, { role: "user" as const, content: text, ...(currentAttachments.length ? { attachments: currentAttachments } : {}) }];
     setMessages(next);
     setDraft("");
-    setAttachment(null);
+    setAttachments([]);
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     setError("");
     setBusy(true);
@@ -230,7 +231,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
           year,
           month,
           includeFinanceData,
-          ...(currentAttachment ? { imageDataUrl: currentAttachment.dataUrl } : {}),
+          ...(currentAttachments.length ? { images: currentAttachments.map((attachment) => attachment.dataUrl) } : {}),
           history: buildAssistantHistory(previous, { year, month, includeFinanceData }),
         }),
       });
@@ -270,7 +271,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       }
       if (!completion) throw new Error("สตรีมคำตอบจบก่อนส่งข้อมูลครบ ลองใหม่อีกครั้งนะ");
       const proposal = completion.proposal && typeof completion.proposal === "object" ? completion.proposal as TransactionProposal : null;
-      if (currentAttachment || proposal?.transaction_type === "expense") expenseMoments.current += 1;
+      if (currentAttachments.length || proposal?.transaction_type === "expense") expenseMoments.current += 1;
       setMessages([...next, {
         role: "assistant",
         content: streamedText,
@@ -280,7 +281,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         proposalId: proposal ? crypto.randomUUID() : undefined,
         proposalStatus: proposal ? "pending" : undefined,
       }]);
-      setMood(expenseMoments.current >= 2 && (currentAttachment || proposal?.transaction_type === "expense") ? "comic" : "talking");
+      setMood(expenseMoments.current >= 2 && (currentAttachments.length || proposal?.transaction_type === "expense") ? "comic" : "talking");
       idleTimer.current = setTimeout(() => setMood("idle"), 3200);
     } catch (caught) {
       if (!streamedText) setMessages(next);
@@ -341,7 +342,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     setMessages([]);
     expenseMoments.current = 0;
     setDraft("");
-    setAttachment(null);
+    setAttachments([]);
     setError("");
     setMood("idle");
     if (idleTimer.current) clearTimeout(idleTimer.current);
@@ -403,12 +404,14 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     void sendMessage(draft);
   }
 
-  async function selectAttachment(file?: File) {
-    if (!file) return;
+  async function selectAttachments(files: File[]) {
+    if (!files.length) return;
     setError("");
     setPreparingAttachment(true);
     try {
-      setAttachment(await prepareAttachment(file));
+      if (attachments.length + files.length > maxAttachments) throw new Error(`แนบภาพได้ไม่เกิน ${maxAttachments} รูปต่อข้อความ`);
+      const prepared = await Promise.all(files.map(prepareAttachment));
+      setAttachments((previous) => [...previous, ...prepared]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "เตรียมภาพไม่สำเร็จ ลองอีกครั้งนะ");
     } finally {
@@ -426,7 +429,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
 
   const status = busy ? "กำลังคิดให้รอบคอบ" : mood === "error" ? "ยังติดขัดนิดหน่อย" : mood === "comic" ? "แอบงอนรายจ่ายนิดนึง" : mood === "talking" ? "กำลังเล่าให้ฟัง" : "พร้อมช่วยคิด";
 
-  const draftNavigation = !attachment ? parseNavigationRequest(draft) : null;
+  const draftNavigation = attachments.length === 0 ? parseNavigationRequest(draft) : null;
 
   return <div className={`assistant-layout${compact ? " assistant-chat-compact" : ""}${home ? " assistant-chat-home" : ""}`}>
     {!compact && <section className={`assistant-companion panel${home ? " assistant-home-companion" : ""}`} aria-label="คุยกับน้องเป๋าวีน">
@@ -457,7 +460,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         {messages.length === 0 ? <div className="assistant-empty"><span className="assistant-empty-icon"><MessageCircle size={19} aria-hidden="true" /></span><strong>เรื่องเงินค่อย ๆ คิดไปด้วยกัน</strong><p>ลองเริ่มจากคำถามแนะนำ หรือพิมพ์เรื่องที่อยากให้ช่วยดูได้เลย</p></div> : messages.map((message, index) => <article className={`assistant-bubble ${message.role}`} key={`${index}-${message.role}`}>
           <strong>{message.role === "user" ? "คุณ" : "เป๋าวีน"}</strong>
           <p>{message.content}</p>
-          {message.attachment && <img className="assistant-message-image" src={message.attachment.dataUrl} alt={`ภาพที่คุณแนบ: ${message.attachment.name}`} />}
+          {message.attachments?.map((attachment) => <img className="assistant-message-image" key={attachment.name} src={attachment.dataUrl} alt={`ภาพที่คุณแนบ: ${attachment.name}`} />)}
           {message.context && <small className="assistant-evidence">อ้างอิง {message.context.transactionCount === 60 ? "ไม่เกิน 60 รายการล่าสุด" : `${message.context.transactionCount} รายการ`} · {scopeName(message.context.year, message.context.month)}{message.context.taxLookupPerformed ? ` · รายการเตรียมภาษี ${message.context.taxRecordCount} รายการ` : ""}</small>}
           {message.proposal && <TransactionProposalCard message={message} busy={savingProposalId === message.proposalId} onSave={() => void saveProposal(index)} onSaveDuplicate={() => void saveProposal(index, true)} onDismiss={() => dismissProposal(index)} onEdit={() => editProposal(index)} />}
         </article>)}
@@ -469,16 +472,16 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
 
       <div className="assistant-consent">
         <label><input type="checkbox" checked={includeFinanceData} onChange={(event) => setIncludeFinanceData(event.target.checked)} disabled={busy} /><span>แนบข้อมูลรายการช่วงที่เลือกให้ AI ใช้ตอบ</span></label>
-        <p>{includeFinanceData ? `เมื่อส่งคำถาม จะส่งรายการไม่เกิน 60 รายการล่าสุดในช่วง ${scopeName(year, month)} และรายการเตรียมภาษีในปีที่เลือกเมื่อถามเรื่องภาษี ไปยัง OpenAI API ผ่านระบบของเป๋าวีน` : "ตอนนี้ไม่ส่งรายการเงินของคุณ"}{attachment ? " · ภาพจะส่งไป OpenAI API พร้อมข้อความเมื่อกดส่ง" : " · ภาพจะส่งไป OpenAI API เมื่อกดส่ง"}</p>
+        <p>{includeFinanceData ? `เมื่อส่งคำถาม จะส่งรายการไม่เกิน 60 รายการล่าสุดในช่วง ${scopeName(year, month)} และรายการเตรียมภาษีในปีที่เลือกเมื่อถามเรื่องภาษี ไปยัง OpenAI API ผ่านระบบของเป๋าวีน` : "ตอนนี้ไม่ส่งรายการเงินของคุณ"} · แนบภาพได้สูงสุด {maxAttachments} รูป และจะส่งไป OpenAI API เมื่อกดส่ง</p>
       </div>
-      {attachment && <div className="assistant-pending-attachment"><img src={attachment.dataUrl} alt="ตัวอย่างภาพที่เตรียมแนบ" /><div><strong><FileImage size={14} aria-hidden="true" /> {attachment.name}</strong><small>{attachment.sizeBytes < 1_000_000 ? `${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB` : `${(attachment.sizeBytes / 1024 / 1024).toFixed(1)} MB`} · ยังไม่ได้ส่ง</small></div><button className="assistant-remove-attachment" type="button" aria-label="นำภาพแนบออก" onClick={() => setAttachment(null)} disabled={busy}><X size={15} aria-hidden="true" /></button></div>}
+      {attachments.map((attachment, index) => <div className="assistant-pending-attachment" key={`${attachment.name}-${index}`}><img src={attachment.dataUrl} alt={`ตัวอย่างภาพที่เตรียมแนบ: ${attachment.name}`} /><div><strong><FileImage size={14} aria-hidden="true" /> {attachment.name}</strong><small>{Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB · ยังไม่ได้ส่ง</small></div><button className="assistant-remove-attachment" type="button" aria-label={`นำภาพ ${attachment.name} ออก`} onClick={() => setAttachments((previous) => previous.filter((_, itemIndex) => itemIndex !== index))} disabled={busy}><X size={15} aria-hidden="true" /></button></div>)}
       <form className="assistant-composer" onSubmit={submit}>
         <label className="sr-only" htmlFor="assistant-message">พิมพ์ข้อความถึงเป๋าวีน</label>
-        <input ref={attachmentInputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" aria-label="เลือกภาพที่จะแนบ" onChange={(event) => { void selectAttachment(event.currentTarget.files?.[0]); }} />
-        <button className="assistant-attach-button" type="button" aria-label="แนบรูป" title="แนบภาพใบเสร็จหรือเอกสาร" disabled={busy || preparingAttachment} onClick={() => attachmentInputRef.current?.click()}>{preparingAttachment ? <LoaderCircle size={17} className="assistant-spinner" aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}</button>
+        <input ref={attachmentInputRef} className="sr-only" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="เลือกภาพที่จะแนบ" onChange={(event) => { void selectAttachments(Array.from(event.currentTarget.files ?? [])); }} />
+        <button className="assistant-attach-button" type="button" aria-label="แนบรูป" title="แนบภาพได้สูงสุด 5 รูป" disabled={busy || preparingAttachment || attachments.length >= maxAttachments} onClick={() => attachmentInputRef.current?.click()}>{preparingAttachment ? <LoaderCircle size={17} className="assistant-spinner" aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}</button>
         <textarea id="assistant-message" ref={inputRef} rows={2} maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onInputKeyDown} placeholder="พิมพ์ข้อความ หรือแนบภาพให้เป๋าวีนช่วยดู" disabled={busy} />
         <button className={`assistant-voice-button${listening ? " listening" : ""}`} type="button" aria-label={listening ? "หยุดฟังเสียง" : "ใช้เสียงพิมพ์ข้อความ"} title={voiceSupported ? (listening ? "หยุดฟังเสียง" : "ใช้เสียงพิมพ์ข้อความ") : "เบราว์เซอร์นี้ยังไม่รองรับการถอดเสียง"} disabled={!voiceSupported || busy} onClick={toggleVoice}>{listening ? <MicOff size={17} aria-hidden="true" /> : <Mic size={17} aria-hidden="true" />}</button>
-        <button className="button-primary assistant-send" type="submit" aria-label="ส่งข้อความ" disabled={busy || preparingAttachment || (!draft.trim() && !attachment) || (!ready && !draftNavigation)}>{busy ? <LoaderCircle size={18} className="assistant-spinner" aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}</button>
+        <button className="button-primary assistant-send" type="submit" aria-label="ส่งข้อความ" disabled={busy || preparingAttachment || (!draft.trim() && !attachments.length) || (!ready && !draftNavigation)}>{busy ? <LoaderCircle size={18} className="assistant-spinner" aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}</button>
       </form>
       <div className="assistant-composer-foot">
         <span>{ready ? "ข้อความจะถูกส่งเมื่อคุณกดส่ง · รายการจะบันทึกเมื่อคุณยืนยัน" : <>AI ปิดอยู่ · คำสั่งนำทางยังใช้ได้ · ไปที่ <a href="/dashboard/settings">ตั้งค่า</a> เพื่อเปิด AI</>}</span><span>{draft.length}/4000</span>

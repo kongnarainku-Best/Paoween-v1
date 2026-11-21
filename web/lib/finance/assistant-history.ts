@@ -6,7 +6,7 @@ type Scope = { year: string; month: string };
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 type VisibleMessage = HistoryMessage & {
   completed?: boolean;
-  attachment?: object;
+  attachments?: object[];
   context?: Scope | null;
   proposal?: {
     transaction_date: string;
@@ -19,8 +19,8 @@ type VisibleMessage = HistoryMessage & {
 };
 
 function historyMessage(message: VisibleMessage): HistoryMessage {
-  const { role, content, attachment, proposal } = message;
-  const imageNote = attachment ? "\n[มีภาพแนบในข้อความก่อนหน้า แต่ระบบไม่ได้ส่งภาพนั้นซ้ำ]" : "";
+  const { role, content, attachments, proposal } = message;
+  const imageNote = attachments?.length ? `\n[มีภาพแนบ ${attachments.length} ภาพในข้อความก่อนหน้า แต่ระบบไม่ได้ส่งภาพเหล่านั้นซ้ำ]` : "";
   const draftNote = proposal
     ? `\n[ร่างก่อนหน้า: วันที่ ${proposal.transaction_date}; ประเภท ${proposal.transaction_type}; รายการ ${proposal.description}; ยอด ${proposal.amount_thb} บาท; หมวด ${proposal.category}${proposal.action ? `; หมายเหตุ ${proposal.action}` : ""}]`
     : "";
