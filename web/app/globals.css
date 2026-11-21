@@ -285,6 +285,15 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline
 .metric-investment dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
 .metric-card.green { border-top: 3px solid #6c996e; }.metric-card.amber { border-top: 3px solid var(--amber); }.metric-card.blue { border-top: 3px solid #7896ac; }.metric-card.neutral { border-top: 3px solid var(--line-strong); }
 .small-note { margin: 9px 0 18px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.monthly-salary { margin-bottom: 18px; }
+.monthly-salary-heading, .monthly-salary-form { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.monthly-salary-heading { align-items: center; justify-content: space-between; }
+.monthly-salary-heading h2 { margin: 0; font-size: 15px; }
+.monthly-salary-heading p, .monthly-salary-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.monthly-salary-heading strong { color: var(--ink); font-size: 20px; font-variant-numeric: tabular-nums; }
+.monthly-salary-form { align-items: flex-end; margin-top: 12px; }
+.monthly-salary-form .form-field { flex: 0 1 220px; }
+.monthly-salary button { min-height: 44px; }
 .dashboard-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); align-items: start; gap: 15px; margin-top: 19px; }
 .panel { min-width: 0; padding: 21px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }

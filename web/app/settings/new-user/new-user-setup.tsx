@@ -8,6 +8,7 @@ import { unstable_rethrow } from "next/navigation";
 import { completeOnboardingAction } from "@/app/settings/new-user/actions";
 import { useOnboardingHandoff } from "@/app/settings/new-user/onboarding-handoff";
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
+import { monthlySalaryInputError, monthlySalaryStorageError, parseMonthlySalary, setMonthlySalary } from "@/lib/finance/monthly-salary";
 
 type Step = 1 | 2 | 3;
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -18,7 +19,7 @@ function formatFileSize(bytes: number) {
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function NewUserSetup({ accountName, scope, today }: { accountName: string; scope: string; today: string }) {
+export function NewUserSetup({ userId, accountName, scope, today }: { userId: string; accountName: string; scope: string; today: string }) {
   const handoff = useOnboardingHandoff();
   const [step, setStep] = useState<Step>(1);
   const [salary, setSalary] = useState("");
@@ -89,9 +90,9 @@ export function NewUserSetup({ accountName, scope, today }: { accountName: strin
       setStep(2);
       return;
     }
-    const value = Number(salary.replaceAll(",", "").trim());
-    if (!Number.isFinite(value) || value <= 0 || value > 10_000_000) {
-      setError("ใส่เงินเดือนสุทธิต่อเดือนให้มากกว่า 0 หรือเลือกข้ามไปก่อน");
+    const value = parseMonthlySalary(salary);
+    if (value === null) {
+      setError(monthlySalaryInputError);
       return;
     }
     setSavedSalary(value);
@@ -101,11 +102,19 @@ export function NewUserSetup({ accountName, scope, today }: { accountName: strin
   function finishSetup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting.current) return;
-    submitting.current = true;
     setSaveError("");
     setPocketErrors({});
+    if (savedSalary !== null) {
+      try {
+        setMonthlySalary(userId, savedSalary);
+      } catch {
+        setSaveError(monthlySalaryStorageError);
+        return;
+      }
+    }
+    submitting.current = true;
     const image = slipKind === "image" ? slip : null;
-    handoff.offer(scope, image ? { kind: "slip", file: image } : { kind: "summary", salary: savedSalary, fileKind: slipKind });
+    handoff.offer(scope, image ? { kind: "slip", file: image } : { kind: "summary", fileKind: slipKind });
     startSaving(async () => {
       try {
         const result = await completeOnboardingAction({
@@ -158,11 +167,11 @@ export function NewUserSetup({ accountName, scope, today }: { accountName: strin
         {step === 1 && <>
           <p className="eyebrow">เริ่มต้นกับเป๋าวีน · 01 / 03</p>
           <h1>เริ่มจากเงินเข้า<br />ของคุณกันก่อน</h1>
-          <p className="onboarding-lead">ใส่ยอดเงินเดือนสุทธิที่ได้รับจริงเพื่อดูในสรุปการเริ่มต้น หรือข้ามได้เลย</p>
+          <p className="onboarding-lead">ใส่ยอดเงินเดือนสุทธิเพื่อใช้เป็นยอดอ้างอิงในหน้าภาพรวม หรือข้ามได้เลย</p>
           <label className="onboarding-field" htmlFor="monthly-salary">เงินเดือนสุทธิต่อเดือน</label>
-          <div className="onboarding-money-input"><input id="monthly-salary" type="number" min="1" max="10000000" step="0.01" inputMode="decimal" value={salary} onChange={(event) => setSalary(event.target.value)} placeholder="เช่น 30,000" aria-describedby="salary-help" /><span>บาท / เดือน</span></div>
-          <p className="onboarding-field-help" id="salary-help">ยอดหลังหักต่าง ๆ ที่ได้รับจริง · เก็บไว้ชั่วคราวในแท็บนี้เท่านั้น</p>
-          {error && step === 1 && <p className="notice notice-error onboarding-error" role="alert">{error}</p>}
+          <div className="onboarding-money-input"><input id="monthly-salary" type="text" inputMode="decimal" value={salary} onChange={(event) => { setSalary(event.target.value); setError(""); }} placeholder="เช่น 30,000" aria-invalid={Boolean(error)} aria-describedby={error ? "salary-help salary-error" : "salary-help"} /><span>บาท / เดือน</span></div>
+          <p className="onboarding-field-help" id="salary-help">ยอดหลังหักต่าง ๆ ที่ได้รับจริง เก็บไว้ในเบราว์เซอร์นี้</p>
+          {error && <p className="notice notice-error onboarding-error" id="salary-error" role="alert">{error}</p>}
           <div className="onboarding-actions"><button className="button-primary" type="button" onClick={() => continueFromSalary()}>ไปต่อ <ArrowRight size={16} aria-hidden="true" /></button><button className="onboarding-skip" type="button" onClick={() => continueFromSalary(true)}>ยังไม่สะดวกบอก ข้ามไปก่อน</button></div>
         </>}
 

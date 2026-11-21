@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 
-type Summary = { kind: "summary"; salary: number | null; fileKind: "image" | "pdf" | null };
+type Summary = { kind: "summary"; fileKind: "image" | "pdf" | null };
 type Slip = { kind: "slip"; file: File };
 type Handoff = Summary | Slip;
 type PendingHandoff = { scope: string; payload: Handoff; expires: ReturnType<typeof setTimeout> };

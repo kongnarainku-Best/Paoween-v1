@@ -18,5 +18,6 @@ export default async function NewUserPage() {
   const { count, error } = await supabase.from("transactions").select("id", { count: "exact", head: true }).eq("user_id", userId);
   if (!error && (count ?? 0) > 0) redirect("/dashboard");
 
-  return <NewUserSetup accountName={typeof claims.email === "string" ? claims.email : "บัญชีของคุณ"} scope={onboardingSessionScope(userId, claims)} today={bangkokDate()} />;
+  const scope = onboardingSessionScope(userId, claims);
+  return <NewUserSetup key={scope} userId={userId} accountName={typeof claims.email === "string" ? claims.email : "บัญชีของคุณ"} scope={scope} today={bangkokDate()} />;
 }

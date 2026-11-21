@@ -6,6 +6,7 @@ import { summarizeInvestment, type InvestmentDirection } from "@/lib/finance/inv
 import { taxRecordTypeLabels, transactionTypeLabels } from "@/lib/finance/validation";
 import { OnboardingSummary } from "@/app/settings/new-user/onboarding-summary";
 import { onboardingSessionScope } from "@/lib/finance/onboarding";
+import { MonthlySalary } from "@/app/dashboard/monthly-salary";
 import { MonthlyTrend, type MonthSummary } from "@/app/dashboard/monthly-trend";
 
 type MonthTransaction = { id: string; transaction_date: string; transaction_type: "income" | "expense" | "investment" | "transfer"; description: string; amount_thb: number | string; category: string };
@@ -101,6 +102,8 @@ export default async function DashboardPage() {
     </section>
     {trendResult.failed && <p className="notice notice-error" role="alert">โหลดข้อมูลสรุปไม่ครบ กรุณาโหลดหน้านี้ใหม่</p>}
     <p className="small-note">ยอดรายรับ รายจ่าย และซื้อขายลงทุนอิงรายการที่คุณบันทึกในเดือนนี้</p>
+
+    <MonthlySalary key={userId} userId={userId} />
 
     {!trendResult.failed && <MonthlyTrend months={monthlyTrend} />}
 
