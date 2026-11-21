@@ -43,8 +43,15 @@ export default async function SettingsPage() {
       </ul>
 
       <div className="ai-budget-box">
-        <strong>ขีดจำกัดช่วง Pilot</strong>
-        {budgetReady && ai.globalDailySpendLimitUsd !== null ? <p>ไม่เกิน {ai.dailyRequestsPerUser ?? 20} คำขอต่อบัญชีต่อวัน และงบรวมของแอปสูงสุด ${ai.globalDailySpendLimitUsd.toFixed(2)} ต่อวัน</p> : <p>ขีดจำกัดทดสอบที่ตั้งไว้คือ 20 คำขอต่อบัญชีต่อวัน และงบรวมของแอป $5 ต่อวัน</p>}
+        <strong>โควตาและงบรวมของแอป</strong>
+        {ai.policyConfigured && ai.dailyRequestsPerUser !== null && ai.globalDailySpendLimitUsd !== null ? (
+          <p>
+            {ai.dailyRequestsPerUser === 0
+              ? "ไม่จำกัดจำนวนคำขอต่อบัญชีต่อวัน"
+              : `ไม่เกิน ${ai.dailyRequestsPerUser} คำขอต่อบัญชีต่อวัน`}
+            {` · งบรวมของแอปสูงสุด $${ai.globalDailySpendLimitUsd.toFixed(2)} ต่อวัน`}
+          </p>
+        ) : <p>ยังไม่พบการตั้งค่าโควตาและงบของแอป</p>}
         <small>ค่าใช้จ่ายในแอปเป็นค่าประมาณจากเรตราคาที่ตั้งใน Supabase โปรดตรวจยอดจริงใน OpenAI API Usage</small>
         {ai.inputRateUsdPerMillionTokens !== null && ai.cachedInputRateUsdPerMillionTokens !== null && ai.outputRateUsdPerMillionTokens !== null && <p className="ai-rate-note">เรทต่อ 1M tokens: input ${ai.inputRateUsdPerMillionTokens.toFixed(2)} · cached input ${ai.cachedInputRateUsdPerMillionTokens.toFixed(2)} · output ${ai.outputRateUsdPerMillionTokens.toFixed(2)}</p>}
       </div>
