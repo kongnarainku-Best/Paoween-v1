@@ -1,0 +1,27 @@
+"use server";
+
+import { redirect } from "next/navigation";
+
+import { hasSupabaseEnv } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+
+export async function signInWithGoogle() {
+  if (!hasSupabaseEnv()) redirect("/?error=setup");
+
+  const supabase = await createClient();
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: new URL("/auth/callback", siteUrl).toString() },
+  });
+
+  if (error || !data.url) redirect("/?error=oauth");
+  redirect(data.url);
+}
+
+export async function signOut() {
+  if (!hasSupabaseEnv()) redirect("/");
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  redirect("/");
+}
