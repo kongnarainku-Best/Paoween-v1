@@ -2,6 +2,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
 import { proposalSchema } from "@/lib/finance/assistant-actions";
+import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { transactionSchema } from "@/lib/finance/validation";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -15,7 +16,7 @@ const requestSchema = z.object({
     transactionId: z.string().uuid(),
     updatedAt: z.iso.datetime({ offset: true }),
   }).strict().optional(),
-  allowDuplicate: z.boolean().default(false),
+  allowDuplicate: z.boolean().optional(),
 }).strict();
 
 export async function POST(request: Request) {
@@ -70,16 +71,9 @@ export async function POST(request: Request) {
     }
   }
 
-  let duplicateQuery = supabase.from("transactions").select("id")
-    .eq("user_id", userId)
-    .eq("transaction_date", transaction.data.transaction_date)
-    .eq("transaction_type", transaction.data.transaction_type)
-    .eq("description", transaction.data.description)
-    .eq("amount_thb", transaction.data.amount_thb);
-  if (edit) duplicateQuery = duplicateQuery.neq("id", edit.transactionId);
-  const duplicate = await duplicateQuery.limit(1).maybeSingle();
+  const duplicate = await findAssistantDuplicate(supabase, userId, transaction.data, edit?.transactionId);
   if (duplicate.error) return Response.json({ error: "ตรวจรายการซ้ำไม่สำเร็จ ลองอีกครั้งนะ" }, { status: 503 });
-  if (duplicate.data && !parsed.data.allowDuplicate) return Response.json({ duplicate: true }, { status: 409 });
+  if (duplicate.duplicate) return Response.json({ duplicate: true }, { status: 409 });
 
   const operation = edit ? supabase.from("transactions").update(transaction.data)
     .eq("user_id", userId).eq("id", edit.transactionId).eq("updated_at", edit.updatedAt)

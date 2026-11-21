@@ -1,10 +1,12 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
-import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseReplySuggestions, proposalSchema } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCategoryOptions, parseReplySuggestions, proposalSchema } from "@/lib/finance/assistant-actions";
+import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
+import { transactionMatchKey } from "@/lib/finance/transaction-match";
 import { transactionCategories, transactionSchema } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -35,7 +37,7 @@ const bodySchema = z.object({
 
 const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
-  transaction_proposals: z.array(proposalSchema).max(5),
+  transaction_proposals: z.array(proposalSchema.extend({ category_options: z.unknown().optional() })).max(5),
   navigation: assistantNavigationSchema.nullish(),
   reply_suggestions: z.unknown().optional(),
   draft_edit: z.object({
@@ -254,8 +256,9 @@ export async function POST(request: Request) {
   if (!parsed.success) return Response.json({ error: "Check your message and selected period, then try again." }, { status: 400 });
 
   const imageDataUrls = parsed.data.images ?? (parsed.data.imageDataUrl ? [parsed.data.imageDataUrl] : []);
-  const validatedImages: string[] = [];
-  for (const imageDataUrl of imageDataUrls) {
+  const imageSet = new Set<string>();
+  const duplicateImagePositions: number[] = [];
+  for (const [index, imageDataUrl] of imageDataUrls.entries()) {
     const match = imageDataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
     if (!match) return Response.json({ error: "แนบได้เฉพาะภาพ JPG, PNG หรือ WebP" }, { status: 400 });
     const imageBytes = Buffer.from(match[2], "base64");
@@ -267,8 +270,10 @@ export async function POST(request: Request) {
     if (!validSignature || imageBytes.length > maxImageBytes || imageBytes.toString("base64") !== match[2]) {
       return Response.json({ error: "ตรวจสอบภาพไม่ผ่านหรือไฟล์ใหญ่เกินไป ลองเลือกภาพใหม่อีกครั้งนะ" }, { status: 400 });
     }
-    validatedImages.push(imageDataUrl);
+    if (imageSet.has(imageDataUrl)) duplicateImagePositions.push(index + 1);
+    else imageSet.add(imageDataUrl);
   }
+  const validatedImages = [...imageSet];
 
   const supabase = await createClient();
   const { data: authData, error: authError } = await supabase.auth.getClaims();
@@ -444,18 +449,40 @@ export async function POST(request: Request) {
               && transactionSchema.safeParse({ ...target.proposal, ...requestedEdit.data.changes }).success
               ? requestedEdit.data : null;
             if (change && !edit) structured.reply = "ยังแก้รายการไม่ได้ครับ ลองระบุเลขรายการและข้อมูลที่ต้องการแก้ให้ชัดขึ้น";
-            let proposals = structured.transaction_proposals.filter((proposal) => transactionSchema.safeParse(proposal).success);
-            if (proposals.length !== structured.transaction_proposals.length) {
+            const candidates = (change ? [] : structured.transaction_proposals).flatMap(({ category_options, ...proposal }) => {
+              const transaction = transactionSchema.safeParse(proposal);
+              if (!transaction.success) return [];
+              const options = validatedImages.length ? parseCategoryOptions(category_options) : [];
+              const action = /^(?:create|save|add|record|insert|update|delete|expense|income|transfer|investment|purchase|buy|payment)(?:\s+(?:transaction|record|entry|expense|income|transfer))?$/i.test(proposal.action.trim()) ? "" : proposal.action;
+              return [{ proposal: { ...proposal, action }, transaction: transaction.data, options }];
+            });
+            if (!change && candidates.length !== structured.transaction_proposals.length) {
               structured.reply += " บางรายการมีข้อมูลไม่ครบหรือรูปแบบไม่ถูกต้อง จึงยังร่างรายการนั้นให้บันทึกไม่ได้";
             }
-            proposals = proposals.map((proposal) => ({
-              ...proposal,
-              action: /^(?:create|save|add|record|insert|update|delete|expense|income|transfer|investment|purchase|buy|payment)(?:\s+(?:transaction|record|entry|expense|income|transfer))?$/i.test(proposal.action.trim()) ? "" : proposal.action,
-            }));
+            const matches = await Promise.all(candidates.map(({ transaction }) => findAssistantDuplicate(supabase, userId, transaction)));
+            const seen = new Set<string>();
+            const duplicates = [];
+            const available = [];
+            for (const [index, candidate] of candidates.entries()) {
+              const key = transactionMatchKey(candidate.transaction);
+              if (matches[index].duplicate || seen.has(key)) duplicates.push(candidate.proposal);
+              else available.push(candidate);
+              seen.add(key);
+            }
+            if (duplicates.length && !available.length) {
+              structured.reply = "พบรายการซ้ำครับ เป๋าวีนข้ามรายการเหล่านั้นแล้ว";
+            }
+            if (matches.some(({ error }) => error)) {
+              console.warn("[paoween-ai] could not check all drafts for duplicates", { requestId });
+              structured.reply += " บางรายการยังตรวจสอบความซ้ำไม่ได้ ระบบจะตรวจอีกครั้งก่อนบันทึกครับ";
+            }
             if (structured.reply !== lastReply) send("replace", { text: structured.reply });
             send("complete", {
               requestId,
-              proposals: change ? [] : proposals,
+              proposals: available.map(({ proposal }) => proposal),
+              categoryOptions: available.map(({ options }) => options),
+              duplicates,
+              duplicateImagePositions,
               navigation: structured.navigation ?? null,
               edit,
               replySuggestions: change && !edit ? [] : parseReplySuggestions(structured.reply_suggestions),

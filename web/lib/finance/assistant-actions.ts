@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { assistantPages } from "./assistant-prompt";
+import { transactionCategories } from "./validation";
 export { assistantPages };
 
 export const assistantPageSchema = z.enum(Object.keys(assistantPages) as [keyof typeof assistantPages, ...(keyof typeof assistantPages)[]]);
@@ -55,4 +56,11 @@ export function parseReplySuggestions(value: unknown): string[] {
     if (replies.size === 3) break;
   }
   return [...replies];
+}
+
+export function parseCategoryOptions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const valid = value.filter((option): option is string => typeof option === "string" && transactionCategories.includes(option));
+  const options = [...new Set(valid)].slice(0, 3);
+  return options.length >= 2 ? options : [];
 }

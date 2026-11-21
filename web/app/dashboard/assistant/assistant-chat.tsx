@@ -5,8 +5,9 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
-import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, parseReplySuggestions, type TransactionProposal } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, parseCategoryOptions, parseReplySuggestions, type TransactionProposal } from "@/lib/finance/assistant-actions";
 import { buildAssistantHistory } from "@/lib/finance/assistant-history";
+import { transactionMatchKey } from "@/lib/finance/transaction-match";
 
 type MonthOption = { key: string; label: string };
 type SavedTransaction = { transactionId: string; updatedAt: string; proposal: TransactionProposal };
@@ -15,6 +16,8 @@ type ProposalCard = {
   number: number;
   proposal: TransactionProposal;
   status: "pending" | "duplicate" | "saved" | "dismissed";
+  categoryOptions?: string[];
+  categoryNeedsChoice?: boolean;
   saved?: SavedTransaction;
   error?: string;
 };
@@ -27,6 +30,8 @@ type ChatMessage = {
   context?: { year: string; month: string; transactionCount: number; taxRecordCount: number; taxLookupPerformed: boolean } | null;
   proposals?: ProposalCard[];
   replySuggestions?: string[];
+  duplicates?: TransactionProposal[];
+  duplicateImagePositions?: number[];
 };
 type Props = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
 type Mood = "idle" | "listening" | "thinking" | "talking" | "done" | "error" | "comic";
@@ -183,9 +188,18 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     const currentAttachments = attachments;
     const text = messageText.trim() || (currentAttachments.length ? "ช่วยดูรายละเอียดในภาพที่แนบมา และถามกลับหากข้อมูลสำคัญยังไม่ชัดเจน" : "");
     if ((!text && !currentAttachments.length) || busyRef.current || preparingAttachment) return;
-    const allowDuplicate = isDuplicateConfirmation(text);
-    if (!currentAttachments.length && (isBatchConfirmation(text) || allowDuplicate)) {
-      await saveBatch(text, allowDuplicate);
+    if (!currentAttachments.length && isDuplicateConfirmation(text)) {
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: text },
+        { role: "assistant", content: "เป๋าวีนข้ามรายการที่พบว่าซ้ำไว้แล้วครับ", completed: true },
+      ]);
+      setDraft("");
+      setError("");
+      return;
+    }
+    if (!currentAttachments.length && isBatchConfirmation(text)) {
+      await saveBatch(text);
       return;
     }
     const navigation = !ready && !currentAttachments.length ? parseNavigationRequest(text) : null;
@@ -212,7 +226,8 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     }
     if (idleTimer.current) clearTimeout(idleTimer.current);
     const previous = messages;
-    const cards = previous.flatMap((message) => message.proposals ?? []).filter((card) => card.status !== "dismissed");
+    const cards = previous.flatMap((message) => message.proposals ?? [])
+      .filter((card) => card.status === "pending" || card.status === "saved");
     const referencedNumber = Number(text.match(/#\s*(\d+)/u)?.[1]);
     const referencedCard = cards.find((card) => card.number === referencedNumber);
     const sortedCards = referencedCard ? [...cards.filter((card) => card !== referencedCard), referencedCard] : cards;
@@ -257,6 +272,9 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       let completion: {
         proposals?: TransactionProposal[] | null;
         proposal?: TransactionProposal | null;
+        categoryOptions?: unknown[];
+        duplicates?: TransactionProposal[];
+        duplicateImagePositions?: number[];
         edit?: unknown;
         navigation?: unknown;
         replySuggestions?: unknown;
@@ -291,15 +309,32 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       const returnedProposals = Array.isArray(completion.proposals)
         ? completion.proposals
         : completion.proposal && typeof completion.proposal === "object" ? [completion.proposal] : [];
-      const proposals: ProposalCard[] = returnedProposals
-        .filter((proposal): proposal is TransactionProposal => Boolean(proposal && typeof proposal === "object"))
-        .map((proposal) => ({ id: crypto.randomUUID(), number: ++proposalNumber.current, proposal, status: "pending" }));
+      const duplicates = Array.isArray(completion.duplicates) ? [...completion.duplicates] : [];
+      const activeKeys = new Set(cards.filter((card) => card.status === "pending").map((card) => transactionMatchKey(card.proposal)));
+      const proposals: ProposalCard[] = [];
+      for (const [index, proposal] of returnedProposals.entries()) {
+        if (!proposal || typeof proposal !== "object") continue;
+        const key = transactionMatchKey(proposal);
+        if (activeKeys.has(key)) {
+          duplicates.push(proposal);
+          continue;
+        }
+        activeKeys.add(key);
+        const categoryOptions = parseCategoryOptions(completion.categoryOptions?.[index]);
+        proposals.push({
+          id: crypto.randomUUID(), number: ++proposalNumber.current, proposal, status: "pending",
+          categoryOptions, categoryNeedsChoice: categoryOptions.length > 0,
+        });
+      }
       const edit = draftEditSchema.safeParse(completion.edit);
       const destination = assistantNavigationSchema.safeParse(completion.navigation);
       const changedMessages = edit.success ? next.map((message) => message.proposals ? {
         ...message,
-        proposals: message.proposals.map((card) => card.number === edit.data.number && card.status !== "dismissed"
-          ? { ...card, proposal: { ...card.proposal, ...edit.data.changes }, status: "pending" as const, error: undefined }
+        proposals: message.proposals.map((card) => card.number === edit.data.number && (card.status === "pending" || card.status === "saved")
+          ? {
+            ...card, proposal: { ...card.proposal, ...edit.data.changes }, status: "pending" as const, error: undefined,
+            ...(edit.data.changes.category === undefined ? {} : { categoryOptions: [], categoryNeedsChoice: false }),
+          }
           : card),
       } : message) : next;
       const hasExpenseProposal = proposals.some(({ proposal }) => proposal.transaction_type === "expense");
@@ -315,6 +350,8 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         completed: true,
         context: completion.context ?? null,
         proposals,
+        duplicates,
+        duplicateImagePositions: completion.duplicateImagePositions,
         replySuggestions: parseReplySuggestions(completion.replySuggestions),
       }]);
       setMood(expenseMoments.current >= 2 && (currentAttachments.length || hasExpenseProposal) ? "comic" : "talking");
@@ -337,11 +374,12 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       : item));
   }
 
-  async function saveBatch(text: string, allowDuplicate: boolean) {
-    const eligibleStatus = allowDuplicate ? "duplicate" : "pending";
-    const items = messages.flatMap((message, index) => (message.proposals ?? [])
-      .filter((card) => card.status === eligibleStatus)
+  async function saveBatch(text: string) {
+    const pending = messages.flatMap((message, index) => (message.proposals ?? [])
+      .filter((card) => card.status === "pending")
       .map((card) => ({ card, index })));
+    const items = pending.filter(({ card }) => !card.categoryNeedsChoice);
+    const awaitingCategory = pending.length - items.length;
     const addReply = (content: string, replySuggestions?: string[]) => setMessages((current) => [
       ...current, { role: "assistant", content, completed: true, replySuggestions },
     ]);
@@ -349,7 +387,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     setDraft("");
     setError("");
     if (!items.length) {
-      addReply(allowDuplicate ? "ไม่มีรายการซ้ำที่รออยู่ครับ" : "ไม่มีรายการที่รอบันทึกครับ");
+      addReply(awaitingCategory ? "เลือกหมวดหมู่บนการ์ดก่อน แล้วค่อยยืนยันได้เลยครับ" : "ไม่มีรายการที่รอบันทึกครับ");
       return;
     }
 
@@ -371,7 +409,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
             headers: { "content-type": "application/json" },
             signal: AbortSignal.timeout(20_000),
             body: JSON.stringify({
-              proposalId: id, proposal, allowDuplicate,
+              proposalId: id, proposal,
               edit: card.saved && { transactionId: card.saved.transactionId, updatedAt: card.saved.updatedAt },
             }),
           });
@@ -399,8 +437,9 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       const numbers = (items: number[]) => items.map((number) => `#${number}`).join(", ");
       addReply([
         saved.length ? `บันทึกแล้ว ${saved.length} รายการ (${numbers(saved)}) ครับ` : "",
-        duplicates.length ? `พบรายการซ้ำ ${numbers(duplicates)} ถ้าเป็นคนละรายการจริง ให้พิมพ์ “บันทึกซ้ำ”` : "",
+        duplicates.length ? `ข้ามรายการซ้ำ ${numbers(duplicates)} แล้วครับ` : "",
         failed.length ? `บันทึก ${numbers(failed)} ไม่สำเร็จครับ ดูรายละเอียดที่การ์ดได้เลย` : "",
+        awaitingCategory ? `มีอีก ${awaitingCategory} รายการรอเลือกหมวดหมู่ครับ` : "",
       ].filter(Boolean).join("\n"), saved.length ? ["เปิดหน้ารายการ"] : undefined);
       setMood(failed.length ? "error" : "done");
       idleTimer.current = setTimeout(() => setMood("idle"), 2200);
@@ -416,6 +455,13 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     updateProposal(index, proposalId, (card) => card.saved
       ? { ...card, proposal: card.saved.proposal, status: "saved", error: undefined }
       : { ...card, status: "dismissed", error: undefined });
+  }
+
+  function chooseCategory(index: number, proposalId: string, category: string) {
+    if (busyRef.current) return;
+    updateProposal(index, proposalId, (card) => card.status === "pending" && card.categoryOptions?.includes(category)
+      ? { ...card, proposal: { ...card.proposal, category }, categoryNeedsChoice: false, error: undefined }
+      : card);
   }
 
   function editProposal(index: number, proposalId: string) {
@@ -531,6 +577,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   const draftConfirmation = attachments.length === 0 && (isBatchConfirmation(draft) || isDuplicateConfirmation(draft));
   const pending = messages.flatMap(({ proposals }) => (proposals ?? []).filter(({ status }) => status === "pending"));
   const pendingCount = pending.length;
+  const saveableCount = pending.filter((card) => !card.categoryNeedsChoice).length;
   const lastMessage = messages.at(-1);
   const quickReplies = lastMessage?.role === "assistant" && lastMessage.completed
     ? lastMessage.replySuggestions ?? []
@@ -566,9 +613,22 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         {messages.length === 0 ? <div className="assistant-empty"><span className="assistant-empty-icon"><MessageCircle size={19} aria-hidden="true" /></span><strong>เรื่องเงินค่อย ๆ คิดไปด้วยกัน</strong><p>ลองเริ่มจากคำถามแนะนำ หรือพิมพ์เรื่องที่อยากให้ช่วยดูได้เลย</p></div> : messages.map((message, index) => <article className={`assistant-bubble ${message.role}`} key={`${index}-${message.role}`}>
           <strong>{message.role === "user" ? "คุณ" : "เป๋าวีน"}</strong>
           <p>{message.content}</p>
-          {message.attachments?.map((attachment) => <img className="assistant-message-image" key={attachment.name} src={attachment.dataUrl} alt={`ภาพที่คุณแนบ: ${attachment.name}`} />)}
+          {message.attachments?.map((attachment, attachmentIndex) => <img className="assistant-message-image" key={`${attachment.name}-${attachmentIndex}`} src={attachment.dataUrl} alt={`ภาพที่คุณแนบ: ${attachment.name}`} />)}
           {message.context && <small className="assistant-evidence">อ้างอิง {message.context.transactionCount === 60 ? "ไม่เกิน 60 รายการล่าสุด" : `${message.context.transactionCount} รายการ`} · {scopeName(message.context.year, message.context.month)}{message.context.taxLookupPerformed ? ` · รายการเตรียมภาษี ${message.context.taxRecordCount} รายการ` : ""}</small>}
-          {message.proposals?.map((card) => <TransactionProposalCard key={card.id} card={card} busy={busy} onDismiss={() => dismissProposal(index, card.id)} onEdit={() => editProposal(index, card.id)} />)}
+          {message.duplicateImagePositions?.map((position) => <p className="assistant-proposal-warning" key={position}>
+            <AlertTriangle size={14} aria-hidden="true" /> รูปแนบที่ {position} ซ้ำ · ข้ามแล้ว
+          </p>)}
+          {message.duplicates?.map((item, duplicateIndex) => <p className="assistant-proposal-warning" key={duplicateIndex}>
+            <AlertTriangle size={14} aria-hidden="true" /> รายการซ้ำ · ข้ามแล้ว ({item.description})
+          </p>)}
+          {message.proposals?.map((card) => <TransactionProposalCard
+            key={card.id}
+            card={card}
+            busy={busy}
+            onDismiss={() => dismissProposal(index, card.id)}
+            onEdit={() => editProposal(index, card.id)}
+            onChooseCategory={(category) => chooseCategory(index, card.id, category)}
+          />)}
         </article>)}
         {busy && <div className="assistant-thinking" role="status"><LoaderCircle size={16} aria-hidden="true" /> {savingBatch ? "กำลังบันทึกรายการ..." : "เป๋าวีนกำลังคิด..."}</div>}
       </div>
@@ -576,9 +636,9 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
       {!messages.length && <div className="assistant-suggestions" aria-label="คำถามแนะนำ">{suggestions.map(({ label, prompt }) => <button type="button" key={label} disabled={!ready || busy} onClick={() => void sendMessage(prompt)}>{label}<ArrowUp size={13} aria-hidden="true" /></button>)}</div>}
       {Boolean(pendingCount || quickReplies.length) && <div className="assistant-suggestions assistant-quick-replies" role="group" aria-label="คำตอบแนะนำ">
         {pendingCount > 0 && <>
-          <button type="button" disabled={quickRepliesDisabled} onClick={() => void sendMessage("ยืนยันทั้งหมด")}>
-            <Check size={13} aria-hidden="true" /> ยืนยันทั้งหมด ({pendingCount})
-          </button>
+          {saveableCount > 0 && <button type="button" disabled={quickRepliesDisabled} onClick={() => void sendMessage("ยืนยันทั้งหมด")}>
+            <Check size={13} aria-hidden="true" /> {saveableCount === pendingCount ? "ยืนยันทั้งหมด" : "ยืนยันรายการที่พร้อม"} ({saveableCount})
+          </button>}
           <button type="button" disabled={!ready || quickRepliesDisabled} onClick={() => prepareDraft(
             pendingCount === 1 ? `แก้ยอดรายการ #${pending[0].number} เป็น ` : "แก้ยอดรายการ #",
           )}>
@@ -600,7 +660,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         <label className="sr-only" htmlFor="assistant-message">พิมพ์ข้อความถึงเป๋าวีน</label>
         <input ref={attachmentInputRef} className="sr-only" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="เลือกภาพที่จะแนบ" onChange={(event) => { void selectAttachments(Array.from(event.currentTarget.files ?? [])); }} />
         <button className="assistant-attach-button" type="button" aria-label="แนบรูป" title="แนบภาพได้สูงสุด 5 รูป" disabled={busy || preparingAttachment || attachments.length >= maxAttachments} onClick={() => attachmentInputRef.current?.click()}>{preparingAttachment ? <LoaderCircle size={17} className="assistant-spinner" aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}</button>
-        <textarea id="assistant-message" ref={inputRef} rows={2} maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onInputKeyDown} placeholder={pendingCount ? "พิมพ์ “ยืนยัน” หรือบอกว่าจะแก้รายการไหน" : "พิมพ์ข้อความ หรือแนบภาพให้เป๋าวีนช่วยดู"} disabled={busy} />
+        <textarea id="assistant-message" ref={inputRef} rows={2} maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onInputKeyDown} placeholder={saveableCount ? "พิมพ์ “ยืนยัน” หรือบอกว่าจะแก้รายการไหน" : "พิมพ์ข้อความ หรือแนบภาพให้เป๋าวีนช่วยดู"} disabled={busy} />
         <button className={`assistant-voice-button${listening ? " listening" : ""}`} type="button" aria-label={listening ? "หยุดฟังเสียง" : "ใช้เสียงพิมพ์ข้อความ"} title={voiceSupported ? (listening ? "หยุดฟังเสียง" : "ใช้เสียงพิมพ์ข้อความ") : "เบราว์เซอร์นี้ยังไม่รองรับการถอดเสียง"} disabled={!voiceSupported || busy} onClick={toggleVoice}>{listening ? <MicOff size={17} aria-hidden="true" /> : <Mic size={17} aria-hidden="true" />}</button>
         <button className="button-primary assistant-send" type="submit" aria-label="ส่งข้อความ" disabled={busy || preparingAttachment || (!draft.trim() && !attachments.length) || (!ready && !draftNavigation && !draftConfirmation)}>{busy ? <LoaderCircle size={18} className="assistant-spinner" aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}</button>
       </form>
@@ -616,7 +676,13 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   </div>;
 }
 
-function TransactionProposalCard({ card, busy, onDismiss, onEdit }: { card: ProposalCard; busy: boolean; onDismiss: () => void; onEdit: () => void }) {
+function TransactionProposalCard({ card, busy, onDismiss, onEdit, onChooseCategory }: {
+  card: ProposalCard;
+  busy: boolean;
+  onDismiss: () => void;
+  onEdit: () => void;
+  onChooseCategory: (category: string) => void;
+}) {
   const { proposal } = card;
   if (card.status === "dismissed") return null;
   const typeLabels: Record<TransactionProposal["transaction_type"], string> = { income: "รายรับ", expense: "รายจ่าย", investment: "ลงทุน", transfer: "โอนระหว่างบัญชี" };
@@ -630,16 +696,26 @@ function TransactionProposalCard({ card, busy, onDismiss, onEdit }: { card: Prop
       <div><dt>ประเภท</dt><dd>{typeLabels[proposal.transaction_type]}</dd></div>
       <div><dt>รายการ</dt><dd>{proposal.description}</dd></div>
       <div><dt>จำนวนเงิน</dt><dd>{Number.isFinite(amount) ? `${new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} บาท` : `${proposal.amount_thb} บาท`}</dd></div>
-      <div><dt>หมวดหมู่</dt><dd>{proposal.category}</dd></div>
+      <div><dt>หมวดหมู่</dt><dd>{card.categoryNeedsChoice && card.status === "pending" ? "รอเลือกหมวด" : proposal.category}</dd></div>
       {proposal.action && <div><dt>หมายเหตุ</dt><dd>{proposal.action}</dd></div>}
     </dl>
-    {card.status === "duplicate" && <p className="assistant-proposal-warning"><AlertTriangle size={14} aria-hidden="true" /> มีรายการที่ตรงกันในบัญชีแล้ว</p>}
+    {card.status === "duplicate" && <p className="assistant-proposal-warning"><AlertTriangle size={14} aria-hidden="true" /> รายการซ้ำ · ข้ามแล้ว</p>}
     {card.error && <p className="assistant-proposal-error" role="alert">{card.error}</p>}
-    <div className="assistant-proposal-actions">
+    {card.status === "pending" && Boolean(card.categoryOptions?.length) && <>
+      {card.categoryNeedsChoice && <p className="assistant-proposal-warning"><AlertTriangle size={14} aria-hidden="true" /> ลองเลือกหมวดที่ตรงกับสลิปครับ</p>}
+      <div className="assistant-suggestions assistant-quick-replies assistant-category-options" role="group" aria-label={`เลือกหมวดของรายการ #${card.number}`}>
+        {card.categoryOptions?.map((category) => <button type="button" key={category} disabled={busy}
+          aria-pressed={!card.categoryNeedsChoice && proposal.category === category} onClick={() => onChooseCategory(category)}>
+          {!card.categoryNeedsChoice && proposal.category === category && <Check size={13} aria-hidden="true" />}
+          {category}
+        </button>)}
+      </div>
+    </>}
+    {card.status !== "duplicate" && <div className="assistant-proposal-actions">
       <button className="button-secondary" type="button" disabled={busy} onClick={onEdit}>แก้ในแชต</button>
       {card.status !== "saved" && <button className="button-secondary" type="button" disabled={busy} onClick={onDismiss}>
         <X size={14} aria-hidden="true" /> {card.saved ? "ยกเลิกการแก้" : "ข้ามรายการ"}
       </button>}
-    </div>
+    </div>}
   </section>;
 }
