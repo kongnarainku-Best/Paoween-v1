@@ -6,7 +6,8 @@ import { signOut } from "@/app/actions";
 import { AssistantDock } from "@/app/dashboard/assistant/assistant-dock";
 import { DashboardNav } from "@/app/dashboard/dashboard-nav";
 import { DashboardRouteTransition } from "@/app/dashboard/dashboard-route-transition";
-import { hasCompletedInitialSetup } from "@/lib/finance/onboarding";
+import { hasCompletedInitialSetup, onboardingSessionScope } from "@/lib/finance/onboarding";
+import { listPocketOptions } from "@/lib/finance/pocket-server";
 import { currentThaiTaxYear, getSignedInUser } from "@/lib/finance/server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -16,6 +17,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { supabase, userId, claims } = await getSignedInUser();
   const email = typeof claims.email === "string" ? claims.email : "บัญชี Google ของคุณ";
+  const onboardingScope = onboardingSessionScope(userId, claims);
   const cookieStore = await cookies();
   const setupCookie = cookieStore.get("paoween_setup_complete")?.value;
   const setupComplete = setupCookie === userId || hasCompletedInitialSetup(claims as Record<string, unknown>);
@@ -24,6 +26,8 @@ export default async function DashboardLayout({ children }: Readonly<{ children:
   const transactionCount = setupComplete ? null : await supabase.from("transactions").select("id", { count: "exact", head: true }).eq("user_id", userId);
 
   if (!setupComplete && transactionCount && !transactionCount.error && (transactionCount.count ?? 0) === 0) redirect("/settings/new-user");
+
+  const pockets = await listPocketOptions(supabase, userId);
 
   return <main className="workspace-page">
     <aside className="workspace-rail" aria-label="เมนูหลัก">
@@ -41,7 +45,7 @@ export default async function DashboardLayout({ children }: Readonly<{ children:
         </div>
       </header>
       <DashboardRouteTransition>{children}</DashboardRouteTransition>
-      <AssistantDock initialYear={String(currentYear)} />
+      <AssistantDock key={onboardingScope} initialYear={String(currentYear)} onboardingScope={onboardingScope} pockets={pockets} />
     </section>
   </main>;
 }

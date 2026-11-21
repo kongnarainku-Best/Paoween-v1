@@ -3,6 +3,9 @@ type ComparableTransaction = {
   transaction_type: string;
   amount_thb: number | string;
   description: string;
+  investment_direction?: string | null;
+  pocket_id?: string | null;
+  destination_pocket_id?: string | null;
 };
 
 export function normalizeTransactionDescription(value: string) {
@@ -16,5 +19,8 @@ export function transactionMatchKey(transaction: ComparableTransaction) {
     transaction.transaction_type,
     Number(transaction.amount_thb),
     normalizeTransactionDescription(transaction.description),
+    transaction.transaction_type === "investment" ? transaction.investment_direction ?? null : null,
+    transaction.pocket_id ?? null,
+    transaction.transaction_type === "transfer" ? transaction.destination_pocket_id ?? null : null,
   ]);
 }

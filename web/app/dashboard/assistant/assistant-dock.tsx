@@ -5,18 +5,19 @@ import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { PocketOption } from "@/lib/finance/pocket";
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
 
 type MonthOption = { key: string; label: string };
 type AssistantOptions = { years: string[]; months: MonthOption[]; initialYear: string; ready: boolean };
-type ChatProps = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
+type ChatProps = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; onboardingScope: string; pockets: PocketOption[]; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
 const AssistantChat = dynamic<ChatProps>(() => import("@/app/dashboard/assistant/assistant-chat").then((module) => module.AssistantChat), {
   loading: () => <div className="assistant-chat-loading" role="status">เป๋าวีนกำลังเตรียมตัว...</div>,
   ssr: false,
 });
-type Props = { initialYear: string };
+type Props = { initialYear: string; onboardingScope: string; pockets: PocketOption[] };
 
-export function AssistantDock({ initialYear }: Props) {
+export function AssistantDock({ initialYear, onboardingScope, pockets }: Props) {
   const pathname = usePathname();
   const isHome = pathname === "/dashboard";
   const [open, setOpen] = useState(() => pathname === "/dashboard/assistant");
@@ -110,7 +111,7 @@ export function AssistantDock({ initialYear }: Props) {
       <section className={`assistant-dock-panel${open ? " is-open" : ""}${isPinned ? " is-pinned" : ""}`} id="assistant-dock-panel" role="complementary" aria-label="แชตกับเป๋าวีน" aria-hidden={!open && !isPinned} inert={!open && !isPinned}>
         <button className="assistant-loading-close assistant-dock-close assistant-dock-close-pinned" type="button" onClick={closeChat} aria-label="ปิดแชตกับเป๋าวีน"><X size={18} aria-hidden="true" /></button>
         {!mounted && <div className="assistant-chat-loading" role="status">เปิดแชตเพื่อคุยกับเป๋าวีน</div>}
-        {mounted && options && <AssistantChat years={options.years} months={options.months} initialYear={options.initialYear || initialYear} initialMonth="all" ready={options.ready} home={isPinned} compact={!isPinned} showMascot onClose={closeChat} />}
+        {mounted && options && <AssistantChat years={options.years} months={options.months} initialYear={options.initialYear || initialYear} initialMonth="all" ready={options.ready} onboardingScope={onboardingScope} pockets={pockets} home={isPinned} compact={!isPinned} showMascot onClose={closeChat} />}
         {mounted && !options && (isPinned
           ? <div className="assistant-home-loading" role={optionsError ? "alert" : "status"}><PaoweenStage /><span>{optionsError ? "โหลดข้อมูลแชตไม่สำเร็จ" : "เป๋าวีนกำลังเตรียมตัว..."}</span>{optionsError && <button className="button-secondary" type="button" onClick={() => { setOptionsError(false); setLoadAttempt((attempt) => attempt + 1); }}>ลองอีกครั้ง</button>}</div>
           : optionsError

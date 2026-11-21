@@ -2,19 +2,23 @@
 
 import { AlertTriangle, ArrowUp, CalendarDays, Check, FileImage, LoaderCircle, MessageCircle, Mic, MicOff, Paperclip, RotateCcw, ShieldCheck, Sparkles, X } from "lucide-react";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { useOnboardingHandoff } from "@/app/settings/new-user/onboarding-handoff";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { PaoweenStage } from "@/app/dashboard/paoween-stage";
-import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, parseCategoryOptions, parseReplySuggestions, type TransactionProposal } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, assistantPages, draftEditSchema, isBatchConfirmation, isDuplicateConfirmation, navigationHref, parseCategoryOptions, parseReplySuggestions, type ConfirmationProposal, type TransactionProposal } from "@/lib/finance/assistant-actions";
 import { buildAssistantHistory } from "@/lib/finance/assistant-history";
+import { PocketSelect } from "@/app/dashboard/pockets/pocket-fields";
+import { pocketLabel, type PocketOption } from "@/lib/finance/pocket";
 import { transactionMatchKey } from "@/lib/finance/transaction-match";
 
 type MonthOption = { key: string; label: string };
-type SavedTransaction = { transactionId: string; updatedAt: string; proposal: TransactionProposal };
+type SavedTransaction = { transactionId: string; updatedAt: string; proposal: ConfirmationProposal };
 type ProposalCard = {
   id: string;
   number: number;
-  proposal: TransactionProposal;
+  proposal: ConfirmationProposal;
   status: "pending" | "duplicate" | "saved" | "dismissed";
   categoryOptions?: string[];
   categoryNeedsChoice?: boolean;
@@ -33,7 +37,7 @@ type ChatMessage = {
   duplicates?: TransactionProposal[];
   duplicateImagePositions?: number[];
 };
-type Props = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
+type Props = { years: string[]; months: MonthOption[]; initialYear: string; initialMonth: string; ready: boolean; onboardingScope: string; pockets: PocketOption[]; home?: boolean; compact?: boolean; showMascot?: boolean; onClose?: () => void };
 type Mood = "idle" | "listening" | "thinking" | "talking" | "done" | "error" | "comic";
 type SpeechResult = { transcript: string };
 type SpeechRecognitionLike = {
@@ -141,8 +145,9 @@ function parseNavigationRequest(message: string): NavigationTarget | null {
   return null;
 }
 
-export function AssistantChat({ years, months, initialYear, initialMonth, ready, home = false, compact = false, showMascot = true, onClose }: Props) {
+export function AssistantChat({ years, months, initialYear, initialMonth, ready, onboardingScope, pockets, home = false, compact = false, showMascot = true, onClose }: Props) {
   const router = useRouter();
+  const onboardingHandoff = useOnboardingHandoff();
   const [year, setYear] = useState(initialYear);
   const [month, setMonth] = useState(initialMonth);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -165,6 +170,19 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   const busyRef = useRef(false);
   const expenseMoments = useRef(0);
   const proposalNumber = useRef(0);
+
+  useEffect(() => {
+    const pending = onboardingHandoff.take(onboardingScope, "slip");
+    if (pending?.kind !== "slip") return;
+    setPreparingAttachment(true);
+    void prepareAttachment(pending.file)
+      .then((attachment) => {
+        setAttachments((previous) => [...previous, attachment]);
+        setDraft((previous) => previous || "ช่วยอ่านสลิปนี้และร่างรายการให้ตรวจด้วย");
+      })
+      .catch(() => setError("เตรียมสลิปจากขั้นตอนเริ่มต้นไม่สำเร็จ ลองแนบภาพใหม่ได้เลย"))
+      .finally(() => setPreparingAttachment(false));
+  }, [onboardingHandoff, onboardingScope]);
 
   useEffect(() => {
     if (!logRef.current) return;
@@ -233,7 +251,10 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     const sortedCards = referencedCard ? [...cards.filter((card) => card !== referencedCard), referencedCard] : cards;
     const conversationItems = sortedCards
       .slice(currentAttachments.length ? -3 : -20)
-      .map(({ number, status, proposal }) => ({ number, status, proposal }));
+      .map(({ number, status, proposal }) => {
+        const { pocket_id: _pocket, destination_pocket_id: _destination, ...chatProposal } = proposal;
+        return { number, status, proposal: chatProposal };
+      });
     const next = [...previous, { role: "user" as const, content: text, ...(currentAttachments.length ? { attachments: currentAttachments } : {}) }];
     setMessages(next);
     setDraft("");
@@ -378,8 +399,8 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     const pending = messages.flatMap((message, index) => (message.proposals ?? [])
       .filter((card) => card.status === "pending")
       .map((card) => ({ card, index })));
-    const items = pending.filter(({ card }) => !card.categoryNeedsChoice);
-    const awaitingCategory = pending.length - items.length;
+    const items = pending.filter(({ card }) => canSaveProposal(card));
+    const awaitingDetails = pending.length - items.length;
     const addReply = (content: string, replySuggestions?: string[]) => setMessages((current) => [
       ...current, { role: "assistant", content, completed: true, replySuggestions },
     ]);
@@ -387,7 +408,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
     setDraft("");
     setError("");
     if (!items.length) {
-      addReply(awaitingCategory ? "เลือกหมวดหมู่บนการ์ดก่อน แล้วค่อยยืนยันได้เลยครับ" : "ไม่มีรายการที่รอบันทึกครับ");
+      addReply(awaitingDetails ? "กรอกข้อมูลที่รอเลือกบนการ์ดก่อน แล้วค่อยยืนยันครับ" : "ไม่มีรายการที่รอบันทึกครับ");
       return;
     }
 
@@ -439,7 +460,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
         saved.length ? `บันทึกแล้ว ${saved.length} รายการ (${numbers(saved)}) ครับ` : "",
         duplicates.length ? `ข้ามรายการซ้ำ ${numbers(duplicates)} แล้วครับ` : "",
         failed.length ? `บันทึก ${numbers(failed)} ไม่สำเร็จครับ ดูรายละเอียดที่การ์ดได้เลย` : "",
-        awaitingCategory ? `มีอีก ${awaitingCategory} รายการรอเลือกหมวดหมู่ครับ` : "",
+        awaitingDetails ? `มีอีก ${awaitingDetails} รายการรอเลือกข้อมูลบนการ์ดครับ` : "",
       ].filter(Boolean).join("\n"), saved.length ? ["เปิดหน้ารายการ"] : undefined);
       setMood(failed.length ? "error" : "done");
       idleTimer.current = setTimeout(() => setMood("idle"), 2200);
@@ -577,7 +598,7 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   const draftConfirmation = attachments.length === 0 && (isBatchConfirmation(draft) || isDuplicateConfirmation(draft));
   const pending = messages.flatMap(({ proposals }) => (proposals ?? []).filter(({ status }) => status === "pending"));
   const pendingCount = pending.length;
-  const saveableCount = pending.filter((card) => !card.categoryNeedsChoice).length;
+  const saveableCount = pending.filter(canSaveProposal).length;
   const lastMessage = messages.at(-1);
   const quickReplies = lastMessage?.role === "assistant" && lastMessage.completed
     ? lastMessage.replySuggestions ?? []
@@ -625,6 +646,10 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
             key={card.id}
             card={card}
             busy={busy}
+            pockets={pockets}
+            onChangeDetails={(changes) => updateProposal(index, card.id, (current) => ({
+              ...current, proposal: { ...current.proposal, ...changes }, error: undefined,
+            }))}
             onDismiss={() => dismissProposal(index, card.id)}
             onEdit={() => editProposal(index, card.id)}
             onChooseCategory={(category) => chooseCategory(index, card.id, category)}
@@ -676,9 +701,21 @@ export function AssistantChat({ years, months, initialYear, initialMonth, ready,
   </div>;
 }
 
-function TransactionProposalCard({ card, busy, onDismiss, onEdit, onChooseCategory }: {
+function canSaveProposal(card: ProposalCard) {
+  const proposal = card.proposal;
+  if (card.categoryNeedsChoice) return false;
+  if (proposal.transaction_type === "investment" && !proposal.investment_direction) return false;
+  if (proposal.transaction_type === "transfer") {
+    return Boolean(proposal.pocket_id && proposal.destination_pocket_id && proposal.pocket_id !== proposal.destination_pocket_id);
+  }
+  return true;
+}
+
+function TransactionProposalCard({ card, busy, pockets, onChangeDetails, onDismiss, onEdit, onChooseCategory }: {
   card: ProposalCard;
   busy: boolean;
+  pockets: PocketOption[];
+  onChangeDetails: (changes: Partial<Pick<ConfirmationProposal, "investment_direction" | "pocket_id" | "destination_pocket_id">>) => void;
   onDismiss: () => void;
   onEdit: () => void;
   onChooseCategory: (category: string) => void;
@@ -689,6 +726,9 @@ function TransactionProposalCard({ card, busy, onDismiss, onEdit, onChooseCatego
   const date = new Date(`${proposal.transaction_date}T00:00:00.000Z`);
   const dateLabel = Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeZone: "Asia/Bangkok" }).format(date) : proposal.transaction_date;
   const amount = Number(proposal.amount_thb);
+  const isInvestment = proposal.transaction_type === "investment";
+  const isTransfer = proposal.transaction_type === "transfer";
+  const pocketName = (id?: string | null) => pockets.find((pocket) => pocket.id === id)?.name ?? "ยังไม่ระบุกระเป๋า";
   return <section className={`assistant-proposal${card.status === "saved" ? " is-saved" : ""}`} aria-label={`รายการ #${card.number}`}>
     <div className="assistant-proposal-title"><span><Sparkles size={14} aria-hidden="true" /> รายการ #{card.number}</span>{card.status === "saved" && <span className="assistant-proposal-saved"><Check size={13} aria-hidden="true" /> บันทึกแล้ว</span>}</div>
     <dl>
@@ -697,8 +737,27 @@ function TransactionProposalCard({ card, busy, onDismiss, onEdit, onChooseCatego
       <div><dt>รายการ</dt><dd>{proposal.description}</dd></div>
       <div><dt>จำนวนเงิน</dt><dd>{Number.isFinite(amount) ? `${new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} บาท` : `${proposal.amount_thb} บาท`}</dd></div>
       <div><dt>หมวดหมู่</dt><dd>{card.categoryNeedsChoice && card.status === "pending" ? "รอเลือกหมวด" : proposal.category}</dd></div>
+      {card.status === "saved" && isInvestment && <div><dt>ซื้อหรือขาย</dt><dd>{proposal.investment_direction === "buy" ? "ซื้อ" : "ขาย"}</dd></div>}
+      {card.status === "saved" && <div><dt>{pocketLabel(proposal.transaction_type, proposal.investment_direction)}</dt><dd>{pocketName(proposal.pocket_id)}{isTransfer && ` → ${pocketName(proposal.destination_pocket_id)}`}</dd></div>}
       {proposal.action && <div><dt>หมายเหตุ</dt><dd>{proposal.action}</dd></div>}
     </dl>
+    {card.status === "pending" && <div className="assistant-pocket-fields">
+      {isInvestment && <label>ซื้อหรือขาย
+        <select value={proposal.investment_direction ?? ""} disabled={busy} onChange={(event) => {
+          const value = event.target.value;
+          onChangeDetails({ investment_direction: value === "buy" || value === "sell" ? value : null });
+        }}>
+          <option value="">เลือกซื้อหรือขาย</option><option value="buy">ซื้อ</option><option value="sell">ขาย</option>
+        </select>
+      </label>}
+      <label>{pocketLabel(proposal.transaction_type, proposal.investment_direction)}
+        <PocketSelect options={pockets} value={proposal.pocket_id ?? ""} disabled={busy} emptyLabel={isTransfer ? "เลือกต้นทาง" : undefined} onChange={(event) => onChangeDetails({ pocket_id: event.target.value || null, ...(event.target.value === proposal.destination_pocket_id ? { destination_pocket_id: null } : {}) })} />
+      </label>
+      {isTransfer && <label>กระเป๋าปลายทาง
+        <PocketSelect options={pockets.filter((pocket) => pocket.id !== proposal.pocket_id)} value={proposal.destination_pocket_id === proposal.pocket_id ? "" : proposal.destination_pocket_id ?? ""} disabled={busy} emptyLabel="เลือกปลายทาง" onChange={(event) => onChangeDetails({ destination_pocket_id: event.target.value || null })} />
+      </label>}
+      {isTransfer && pockets.length < 2 && <Link href="/dashboard/pockets" className="text-link">เพิ่มให้ครบสองกระเป๋า</Link>}
+    </div>}
     {card.status === "duplicate" && <p className="assistant-proposal-warning"><AlertTriangle size={14} aria-hidden="true" /> รายการซ้ำ · ข้ามแล้ว</p>}
     {card.error && <p className="assistant-proposal-error" role="alert">{card.error}</p>}
     {card.status === "pending" && Boolean(card.categoryOptions?.length) && <>

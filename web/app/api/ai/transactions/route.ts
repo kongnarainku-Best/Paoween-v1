@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
-import { proposalSchema } from "@/lib/finance/assistant-actions";
+import { confirmationProposalSchema } from "@/lib/finance/assistant-actions";
 import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { transactionSchema } from "@/lib/finance/validation";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   proposalId: z.string().uuid(),
-  proposal: proposalSchema,
+  proposal: confirmationProposalSchema,
   edit: z.object({
     transactionId: z.string().uuid(),
     updatedAt: z.iso.datetime({ offset: true }),
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   const sourceReference = `Paoween AI proposal ${parsed.data.proposalId}`;
   const edit = parsed.data.edit;
   const findSavedProposal = () => supabase.from("transactions")
-    .select("id,updated_at,transaction_date,transaction_type,description,amount_thb,category,action")
+    .select("id,updated_at,transaction_date,transaction_type,description,amount_thb,category,action,investment_direction,pocket_id,destination_pocket_id")
     .eq("user_id", userId).eq("source_reference", sourceReference).maybeSingle();
   const savedResponse = (row: { id: string; updated_at: string }) =>
     Response.json({ saved: true, transactionId: row.id, updatedAt: row.updated_at });
@@ -66,14 +66,22 @@ export async function POST(request: Request) {
       const data = transaction.data;
       const alreadyApplied = row.transaction_date === data.transaction_date
         && row.transaction_type === data.transaction_type && row.description === data.description
-        && Number(row.amount_thb) === data.amount_thb && row.category === data.category && row.action === data.action;
+        && Number(row.amount_thb) === data.amount_thb && row.category === data.category && row.action === data.action
+        && row.investment_direction === data.investment_direction && row.pocket_id === data.pocket_id
+        && row.destination_pocket_id === data.destination_pocket_id;
       return alreadyApplied ? savedResponse(row) : conflict();
     }
   }
 
-  const duplicate = await findAssistantDuplicate(supabase, userId, transaction.data, edit?.transactionId);
+  const duplicate = await findAssistantDuplicate(supabase, userId, transaction.data, edit?.transactionId, true);
   if (duplicate.error) return Response.json({ error: "ตรวจรายการซ้ำไม่สำเร็จ ลองอีกครั้งนะ" }, { status: 503 });
-  if (duplicate.duplicate) return Response.json({ duplicate: true }, { status: 409 });
+  if (duplicate.duplicate) {
+    if (!edit) {
+      const retry = await findSavedProposal();
+      if (retry.data) return savedResponse(retry.data);
+    }
+    return Response.json({ duplicate: true }, { status: 409 });
+  }
 
   const operation = edit ? supabase.from("transactions").update(transaction.data)
     .eq("user_id", userId).eq("id", edit.transactionId).eq("updated_at", edit.updatedAt)
@@ -90,6 +98,7 @@ export async function POST(request: Request) {
     const retry = await findSavedProposal();
     if (retry.data) return savedResponse(retry.data);
   }
+  if (error?.code === "23503") return Response.json({ error: "ไม่พบกระเป๋าที่เลือกในบัญชีของคุณ กรุณาเลือกกระเป๋าอีกครั้ง" }, { status: 400 });
   if (error || !data) return Response.json({ error: "บันทึกรายการไม่สำเร็จ ลองอีกครั้งนะ" }, { status: 503 });
 
   revalidatePath("/dashboard", "layout");

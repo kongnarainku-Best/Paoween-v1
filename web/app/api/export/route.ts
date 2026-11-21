@@ -21,16 +21,19 @@ async function readAll<T>(load: (from: number, to: number) => PromiseLike<{ data
 export async function GET() {
   const { supabase, userId, claims } = await getSignedInUser();
   try {
-    const [transactions, taxRecords] = await Promise.all([
-      readAll((from, to) => supabase.from("transactions").select("id,transaction_date,transaction_type,description,amount_thb,category,action,source,source_reference,data_quality_flag,created_at,updated_at")
-        .eq("user_id", userId).order("transaction_date", { ascending: true }).range(from, to)),
+    const [transactions, taxRecords, pockets] = await Promise.all([
+      readAll((from, to) => supabase.from("transactions").select("id,transaction_date,transaction_type,description,amount_thb,category,action,investment_direction,pocket_id,destination_pocket_id,source,source_reference,data_quality_flag,created_at,updated_at")
+        .eq("user_id", userId).order("transaction_date", { ascending: true }).order("id").range(from, to)),
       readAll((from, to) => supabase.from("tax_records").select("id,transaction_id,tax_year,record_type,tax_category,amount_thb,source_reference,document_status,review_status,notes,created_at,updated_at")
-        .eq("user_id", userId).order("tax_year", { ascending: true }).range(from, to)),
+        .eq("user_id", userId).order("tax_year", { ascending: true }).order("id").range(from, to)),
+      readAll((from, to) => supabase.from("pockets").select("id,name,opening_balance_thb,opening_date,created_at")
+        .eq("user_id", userId).order("created_at").order("id").range(from, to)),
     ]);
     const payload = {
       format: "paoween-finance-export-v1",
       exported_at: new Date().toISOString(),
       account_email: typeof claims.email === "string" ? claims.email : null,
+      pockets,
       transactions,
       tax_records: taxRecords,
     };

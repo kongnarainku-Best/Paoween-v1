@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, ChartNoAxesColumnIncreasing, ChartPie, Ellipsis, ListChecks, ListTodo, MessageCircle, ReceiptText, Settings2, ShoppingBag, TrendingUp } from "lucide-react";
+import { CalendarDays, ChartNoAxesColumnIncreasing, ChartPie, Ellipsis, ListChecks, ListTodo, MessageCircle, ReceiptText, Settings2, ShoppingBag, TrendingUp, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +14,7 @@ const items = [
 ];
 
 const moreItems = [
+  { href: "/dashboard/pockets", label: "กระเป๋าเงิน", icon: Wallet },
   { href: "/dashboard/review", label: "งานตรวจ", icon: ListTodo },
   { href: "/dashboard/local-tools", label: "ฟีเจอร์ที่อยู่ในเครื่อง", icon: CalendarDays },
   { href: "/dashboard/settings", label: "ตั้งค่า", icon: Settings2 },

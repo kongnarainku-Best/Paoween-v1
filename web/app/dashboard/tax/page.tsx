@@ -24,7 +24,7 @@ export default async function TaxPage({ searchParams }: { searchParams: Search }
   const errors: Record<string, string> = { "delete-confirmation": "ต้องยืนยันการลบก่อน", "delete-failed": "ลบรายการภาษีไม่สำเร็จ กรุณาลองใหม่" };
 
   return <div className="workspace-content">
-    <div className="dashboard-heading"><div><p className="eyebrow">TAX PREPARATION</p><h1>เตรียมภาษี<span className="period">.</span></h1><p className="muted">จัดเก็บรายการและหลักฐานพร้อมสถานะตรวจสอบ</p></div><Link className="button-primary" href="/dashboard/tax/new"><Plus size={17} aria-hidden="true" /> เพิ่มรายการ</Link></div>
+    <div className="dashboard-heading"><div><p className="eyebrow">TAX PREPARATION</p><h1>เตรียมภาษี<span className="period">.</span></h1><p className="muted">จัดเก็บรายการและหลักฐานพร้อมสถานะตรวจสอบ</p></div><Link className="button-primary" href={`/dashboard/tax/new?year=${selectedYear}`}><Plus size={17} aria-hidden="true" /> เพิ่มรายการ</Link></div>
     <form className="year-filter" action="/dashboard/tax"><label htmlFor="year">ปีภาษี (พ.ศ.)</label><input id="year" name="year" type="number" min="2400" max="2700" step="1" defaultValue={selectedYear} /><button className="button-secondary" type="submit">แสดงรายการ</button><span>ยอดต้นทางและยอดรายการย่อยแสดงแยกกัน ไม่ควรนำมาบวกรวมกัน</span></form>
     {params.saved && notices[params.saved] && <p className="notice notice-success" role="status">{notices[params.saved]}</p>}
     {params.error && errors[params.error] && <p className="notice notice-error" role="alert">{errors[params.error]}</p>}
@@ -34,7 +34,7 @@ export default async function TaxPage({ searchParams }: { searchParams: Search }
           <td data-label="รายการภาษี"><strong>{row.tax_category}</strong>{row.source_reference && <small className="table-subline">{row.source_reference}</small>}</td>
           <td data-label="ชนิด"><span className="type-label">{taxRecordTypeLabels[row.record_type as keyof typeof taxRecordTypeLabels] ?? row.record_type}</span>{row.notes && <small className="table-subline">{row.notes}</small>}</td>
           <td data-label="เอกสาร / ตรวจสอบ"><span className="status-chip">{documentStatusLabels[row.document_status as keyof typeof documentStatusLabels] ?? row.document_status}</span><small className="table-subline">{reviewStatusLabels[row.review_status as keyof typeof reviewStatusLabels] ?? row.review_status}</small></td>
-          <td data-label="จำนวนเงิน" className="numeric">{formatTHB(row.amount_thb)}</td>
+          <td data-label="จำนวนเงิน" className="numeric">{row.amount_thb === null ? "ยังไม่ทราบ" : formatTHB(row.amount_thb)}</td>
           <td className="row-actions"><Link className="icon-link" href={`/dashboard/tax/${row.id}/edit`} aria-label={`แก้ไข ${row.tax_category}`}><Pencil size={16} aria-hidden="true" /></Link>
             <details className="delete-menu"><summary aria-label={`ตัวเลือกลบ ${row.tax_category}`}>•••</summary><form action={deleteTaxRecordAction} className="delete-confirm-form"><input type="hidden" name="id" value={row.id} /><label><input type="checkbox" name="confirm_delete" value="yes" required /> ยืนยันลบรายการนี้</label><button className="button-danger button-small" type="submit">ลบรายการ</button></form></details>
           </td>

@@ -1,11 +1,13 @@
 import { z } from "zod";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00.000Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }, "กรุณาเลือกวันที่ที่ถูกต้อง");
 
-export const transactionSchema = z.object({
+const optionalPocketId = z.union([z.uuid(), z.literal(""), z.null()]).optional().transform((value) => value || null);
+
+export const transactionDraftSchema = z.object({
   transaction_date: isoDate,
   transaction_type: z.enum(["income", "expense", "investment", "transfer"], { error: "เลือกประเภทรายการ" }),
   description: z.string().trim().min(1, "กรอกรายละเอียดรายการ").max(240, "รายละเอียดต้องไม่เกิน 240 ตัวอักษร"),
@@ -13,7 +15,26 @@ export const transactionSchema = z.object({
     .transform(Number).pipe(z.number().finite().gt(0, "จำนวนเงินต้องมากกว่า 0").max(999999999999.99, "จำนวนเงินมากเกินไป")),
   category: z.string().trim().min(1, "กรอกหมวดหมู่").max(80, "หมวดหมู่ต้องไม่เกิน 80 ตัวอักษร"),
   action: z.string().trim().max(240, "หมายเหตุต้องไม่เกิน 240 ตัวอักษร").transform((value) => value || null),
+  investment_direction: z.union([z.enum(["buy", "sell"]), z.literal(""), z.null()]).optional().transform((value) => value || null),
+  pocket_id: optionalPocketId,
+  destination_pocket_id: optionalPocketId,
 });
+
+export const transactionSchema = transactionDraftSchema.superRefine((value, context) => {
+  if (value.transaction_type === "investment" && !value.investment_direction) {
+    context.addIssue({ code: "custom", path: ["investment_direction"], message: "เลือกว่าซื้อหรือขาย" });
+  }
+  if (value.transaction_type === "transfer") {
+    if (!value.pocket_id) context.addIssue({ code: "custom", path: ["pocket_id"], message: "เลือกกระเป๋าต้นทาง" });
+    if (!value.destination_pocket_id || value.destination_pocket_id === value.pocket_id) {
+      context.addIssue({ code: "custom", path: ["destination_pocket_id"], message: "เลือกกระเป๋าปลายทางที่ต่างจากต้นทาง" });
+    }
+  }
+}).transform((value) => ({
+  ...value,
+  investment_direction: value.transaction_type === "investment" ? value.investment_direction : null,
+  destination_pocket_id: value.transaction_type === "transfer" ? value.destination_pocket_id : null,
+}));
 
 export const taxRecordSchema = z.object({
   transaction_id: z.string().uuid("เลือกรายการที่ถูกต้อง").or(z.literal("")).transform((value) => value || null),

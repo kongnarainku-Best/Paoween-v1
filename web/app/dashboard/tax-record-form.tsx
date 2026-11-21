@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition, type KeyboardEvent } from "react";
 
-import { createTaxRecordAction, updateTaxRecordAction } from "@/app/dashboard/actions";
+import { createTaxRecordAction, searchTaxTransactionsAction, updateTaxRecordAction } from "@/app/dashboard/actions";
 import { emptyFinanceFormState } from "@/lib/finance/form-state";
 import { documentStatusLabels, reviewStatusLabels, taxRecordTypeLabels, type TaxRecordInput } from "@/lib/finance/validation";
 
@@ -33,12 +33,7 @@ export function TaxRecordForm({ record, transactions, currentYear }: { record?: 
       <Field label="จำนวนเงิน (บาท)" name="amount_thb" error={state.fieldErrors.amount_thb}>
         <input id="amount_thb" name="amount_thb" type="number" inputMode="decimal" min="0" step="0.01" max="999999999999.99" defaultValue={record?.amount_thb ?? ""} placeholder="เว้นว่างหากยังไม่มีหลักฐาน" aria-invalid={!!state.fieldErrors.amount_thb} aria-describedby={state.fieldErrors.amount_thb ? "error-amount_thb" : undefined} />
       </Field>
-      <Field label="รายการในบัญชี (ไม่บังคับ)" name="transaction_id" error={state.fieldErrors.transaction_id}>
-        <select id="transaction_id" name="transaction_id" defaultValue={record?.transaction_id ?? ""} aria-invalid={!!state.fieldErrors.transaction_id} aria-describedby={state.fieldErrors.transaction_id ? "error-transaction_id" : undefined}>
-          <option value="">ไม่เชื่อมกับรายการ</option>
-          {transactions.map((row) => <option value={row.id} key={row.id}>{row.transaction_date} · {row.description} · {Number(row.amount_thb).toFixed(2)}</option>)}
-        </select>
-      </Field>
+      <TaxTransactionPicker initialRows={transactions} initialId={record?.transaction_id ?? ""} error={state.fieldErrors.transaction_id} />
       <Field label="สถานะเอกสาร" name="document_status" error={state.fieldErrors.document_status}>
         <select id="document_status" name="document_status" defaultValue={record?.document_status ?? "missing"} required aria-invalid={!!state.fieldErrors.document_status} aria-describedby={state.fieldErrors.document_status ? "error-document_status" : undefined}>
           {Object.entries(documentStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
@@ -57,8 +52,75 @@ export function TaxRecordForm({ record, transactions, currentYear }: { record?: 
       </Field>
     </div>
     <p className="small-note form-note">รายการภาษีเป็นเพียงบันทึกเตรียมเอกสาร ไม่ได้ยืนยันว่าหักลดหย่อนได้ โปรดตรวจเอกสารและกฎของปีภาษีนั้นก่อน</p>
-    <div className="form-actions"><a className="button-secondary" href="/dashboard/tax">ยกเลิก</a><button className="button-primary" type="submit" disabled={pending}>{pending ? "กำลังบันทึก…" : record ? "บันทึกการแก้ไข" : "บันทึกรายการภาษี"}</button></div>
+    <div className="form-actions"><a className="button-secondary" href={`/dashboard/tax?year=${currentYear}`}>ยกเลิก</a><button className="button-primary" type="submit" disabled={pending}>{pending ? "กำลังบันทึก…" : record ? "บันทึกการแก้ไข" : "บันทึกรายการภาษี"}</button></div>
   </form>;
+}
+
+function TaxTransactionPicker({ initialRows, initialId, error }: { initialRows: LinkedTransaction[]; initialId: string; error?: string }) {
+  const [rows, setRows] = useState(initialRows);
+  const [selectedId, setSelectedId] = useState(initialId);
+  const [selectedRow, setSelectedRow] = useState(initialRows.find((row) => row.id === initialId));
+  const [date, setDate] = useState("");
+  const [description, setDescription] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [searching, startSearch] = useTransition();
+  const missingSelection = selectedId && !rows.some((row) => row.id === selectedId);
+
+  function search() {
+    if (searching) return;
+    startSearch(async () => {
+      try {
+        const result = await searchTaxTransactionsAction({ date, description });
+        if (!result.rows) {
+          setFeedback(result.error);
+          return;
+        }
+        setRows(result.rows);
+        setFeedback(result.hasMore
+          ? "แสดง 50 รายการแรก ลองระบุวันที่หรือคำค้นหาเพิ่ม"
+          : result.rows.length ? `พบ ${result.rows.length} รายการ` : "ไม่พบรายการที่ตรงกับคำค้นหา");
+      } catch {
+        setFeedback("ค้นหารายการไม่สำเร็จ กรุณาลองอีกครั้ง");
+      }
+    });
+  }
+
+  function searchOnEnter(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    search();
+  }
+
+  function transactionLabel(row?: LinkedTransaction) {
+    return row ? `${row.transaction_date} · ${row.description} · ${Number(row.amount_thb).toFixed(2)}` : "รายการที่เชื่อมไว้";
+  }
+
+  return <>
+    <Field label="รายการในบัญชี (ไม่บังคับ)" name="transaction_id" error={error}>
+      <select id="transaction_id" name="transaction_id" value={selectedId}
+        aria-invalid={!!error} aria-describedby={error ? "error-transaction_id" : undefined}
+        onChange={(event) => {
+          const id = event.target.value;
+          setSelectedId(id);
+          if (id !== selectedId) setSelectedRow(rows.find((row) => row.id === id));
+        }}>
+        <option value="">ไม่เชื่อมกับรายการ</option>
+        {missingSelection && <option value={selectedId}>{transactionLabel(selectedRow)}</option>}
+        {rows.map((row) => <option value={row.id} key={row.id}>{transactionLabel(row)}</option>)}
+      </select>
+    </Field>
+    <details className="form-field tax-transaction-search">
+      <summary>ค้นหารายการในบัญชี</summary>
+      <Field label="วันที่ทำรายการ" name="tax-transaction-date">
+        <input id="tax-transaction-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} onKeyDown={searchOnEnter} />
+      </Field>
+      <Field label="คำอธิบายรายการ" name="tax-transaction-description">
+        <input id="tax-transaction-description" type="search" maxLength={120} value={description} onChange={(event) => setDescription(event.target.value)} onKeyDown={searchOnEnter} />
+      </Field>
+      <button className="button-secondary" type="button" onClick={search} disabled={searching}>{searching ? "กำลังค้นหา…" : "ค้นหา"}</button>
+      <div className="small-note" role="status">{feedback}</div>
+    </details>
+  </>;
 }
 
 function Field({ label, name, error, children }: { label: string; name: string; error?: string; children: React.ReactNode }) {

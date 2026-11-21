@@ -3,11 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { createDeletionProof, deletionCookieOptions, deletionGrantCookie, deletionReauthCookie, hasDeletionGrant } from "@/lib/finance/account-deletion";
 import { readFormString, stateFromIssues, type FinanceFormState } from "@/lib/finance/form-state";
 import { getSignedInUser } from "@/lib/finance/server";
-import { taxRecordSchema, transactionSchema } from "@/lib/finance/validation";
+import { taxRecordSchema, transactionSchema, type TransactionInput } from "@/lib/finance/validation";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -19,6 +20,9 @@ function transactionData(formData: FormData) {
     amount_thb: readFormString(formData, "amount_thb"),
     category: readFormString(formData, "category"),
     action: readFormString(formData, "action"),
+    investment_direction: readFormString(formData, "investment_direction"),
+    pocket_id: readFormString(formData, "pocket_id"),
+    destination_pocket_id: readFormString(formData, "destination_pocket_id"),
   };
 }
 
@@ -39,7 +43,7 @@ function taxRecordData(formData: FormData) {
 async function isDuplicateTransaction(
   supabase: Awaited<ReturnType<typeof getSignedInUser>>["supabase"],
   userId: string,
-  input: { transaction_date: string; transaction_type: string; description: string; amount_thb: number },
+  input: TransactionInput,
   exceptId?: string,
 ) {
   let query = supabase.from("transactions").select("id").eq("user_id", userId)
@@ -47,6 +51,10 @@ async function isDuplicateTransaction(
     .eq("transaction_type", input.transaction_type)
     .eq("description", input.description)
     .eq("amount_thb", input.amount_thb).limit(1);
+  for (const field of ["investment_direction", "pocket_id", "destination_pocket_id"] as const) {
+    const value = input[field];
+    if (value) query = query.or(`${field}.eq.${value},${field}.is.null`);
+  }
   if (exceptId) query = query.neq("id", exceptId);
   return query.maybeSingle();
 }
@@ -56,20 +64,32 @@ export async function createTransactionAction(_state: FinanceFormState, formData
   const parsed = transactionSchema.safeParse(transactionData(formData));
   if (!parsed.success) return stateFromIssues(parsed.error.issues);
 
+  const id = readFormString(formData, "submission_id");
+  if (!zodUuid(id)) return { error: "ฟอร์มหมดอายุ กรุณาโหลดหน้าใหม่", fieldErrors: {} };
+  const findSubmission = () => supabase.from("transactions").select("id").eq("user_id", userId).eq("id", id).maybeSingle();
+  const existing = await findSubmission();
+  if (existing.error) return { error: "ตรวจสอบรายการเดิมไม่สำเร็จ กรุณาลองอีกครั้ง", fieldErrors: {} };
+  if (existing.data) redirect("/dashboard/transactions?saved=created");
+
   const duplicate = await isDuplicateTransaction(supabase, userId, parsed.data);
   if (duplicate.error) return { error: "ตรวจรายการซ้ำไม่สำเร็จ กรุณาลองอีกครั้ง", fieldErrors: {} };
   if (duplicate.data && readFormString(formData, "allow_duplicate") !== "yes") {
+    if ((await findSubmission()).data) redirect("/dashboard/transactions?saved=created");
     return { error: "พบรายการที่มีวัน ประเภท จำนวนเงิน และคำอธิบายตรงกัน กรุณาตรวจสอบก่อนบันทึกซ้ำ", fieldErrors: {}, duplicate: true };
   }
 
   const { error } = await supabase.from("transactions").insert({
     ...parsed.data,
+    id,
     user_id: userId,
     source: "manual_entry",
   });
+  if (error?.code === "23505" && (await findSubmission()).data) {
+    revalidatePath("/dashboard", "layout");
+    redirect("/dashboard/transactions?saved=created");
+  }
   if (error) return { error: "บันทึกรายการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองอีกครั้ง", fieldErrors: {} };
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/transactions");
+  revalidatePath("/dashboard", "layout");
   redirect("/dashboard/transactions?saved=created");
 }
 
@@ -88,8 +108,7 @@ export async function updateTransactionAction(_state: FinanceFormState, formData
 
   const { data, error } = await supabase.from("transactions").update(parsed.data).eq("id", id).eq("user_id", userId).select("id").maybeSingle();
   if (error || !data) return { error: "แก้ไขรายการไม่สำเร็จ หรือไม่พบรายการนี้ในบัญชีของคุณ", fieldErrors: {} };
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/transactions");
+  revalidatePath("/dashboard", "layout");
   redirect("/dashboard/transactions?saved=updated");
 }
 
@@ -99,8 +118,7 @@ export async function deleteTransactionAction(formData: FormData) {
   if (!zodUuid(id) || readFormString(formData, "confirm_delete") !== "yes") redirect("/dashboard/transactions?error=delete-confirmation");
   const { data, error } = await supabase.from("transactions").delete().eq("id", id).eq("user_id", userId).select("id").maybeSingle();
   if (error || !data) redirect("/dashboard/transactions?error=delete-failed");
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/transactions");
+  revalidatePath("/dashboard", "layout");
   redirect("/dashboard/transactions?saved=deleted");
 }
 
@@ -116,7 +134,7 @@ export async function createTaxRecordAction(_state: FinanceFormState, formData: 
   if (error) return { error: "บันทึกรายการภาษีไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองอีกครั้ง", fieldErrors: {} };
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/tax");
-  redirect("/dashboard/tax?saved=created");
+  redirect(`/dashboard/tax?year=${parsed.data.tax_year}&saved=created`);
 }
 
 export async function updateTaxRecordAction(_state: FinanceFormState, formData: FormData): Promise<FinanceFormState> {
@@ -133,18 +151,37 @@ export async function updateTaxRecordAction(_state: FinanceFormState, formData: 
   if (error || !data) return { error: "แก้ไขรายการภาษีไม่สำเร็จ หรือไม่พบรายการนี้ในบัญชีของคุณ", fieldErrors: {} };
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/tax");
-  redirect("/dashboard/tax?saved=updated");
+  redirect(`/dashboard/tax?year=${parsed.data.tax_year}&saved=updated`);
 }
 
 export async function deleteTaxRecordAction(formData: FormData) {
   const { supabase, userId } = await getSignedInUser();
   const id = readFormString(formData, "id");
   if (!zodUuid(id) || readFormString(formData, "confirm_delete") !== "yes") redirect("/dashboard/tax?error=delete-confirmation");
-  const { data, error } = await supabase.from("tax_records").delete().eq("id", id).eq("user_id", userId).select("id").maybeSingle();
+  const { data, error } = await supabase.from("tax_records").delete().eq("id", id).eq("user_id", userId).select("tax_year").maybeSingle();
   if (error || !data) redirect("/dashboard/tax?error=delete-failed");
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/tax");
-  redirect("/dashboard/tax?saved=deleted");
+  redirect(`/dashboard/tax?year=${data.tax_year}&saved=deleted`);
+}
+
+const taxTransactionSearchSchema = z.object({
+  date: z.iso.date().or(z.literal("")),
+  description: z.string().trim().max(120),
+});
+
+export async function searchTaxTransactionsAction(filters: { date: string; description: string }) {
+  const { supabase, userId } = await getSignedInUser();
+  const parsed = taxTransactionSearchSchema.safeParse(filters);
+  if (!parsed.success) return { error: "กรุณาตรวจวันที่และคำค้นหา" };
+
+  const { date, description } = parsed.data;
+  let query = supabase.from("transactions").select("id,transaction_date,description,amount_thb").eq("user_id", userId);
+  if (date) query = query.eq("transaction_date", date);
+  if (description) query = query.ilike("description", `%${description.replace(/[\\%_]/g, "\\$&")}%`);
+  const { data, error } = await query.order("transaction_date", { ascending: false }).order("id").limit(51);
+  if (error || !data) return { error: "ค้นหารายการไม่สำเร็จ กรุณาลองอีกครั้ง" };
+  return { rows: data.slice(0, 50), hasMore: data.length > 50 };
 }
 
 export async function startDeleteAccountReauthAction() {

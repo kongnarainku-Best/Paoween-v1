@@ -83,7 +83,7 @@ export default async function SettingsPage() {
 
     <section className="settings-card">
       <div className="settings-icon"><Download size={20} aria-hidden="true" /></div>
-      <div><h2>ส่งออกข้อมูล</h2><p>ดาวน์โหลดรายการและข้อมูลเตรียมภาษีทั้งหมดของบัญชีนี้เป็นไฟล์ JSON</p></div>
+      <div><h2>ส่งออกข้อมูล</h2><p>ดาวน์โหลดธุรกรรม กระเป๋าเงิน และข้อมูลเตรียมภาษีของบัญชีนี้เป็นไฟล์ JSON</p></div>
       <a className="button-secondary" href="/api/export">ดาวน์โหลด JSON</a>
     </section>
     <section className="settings-card danger-zone">

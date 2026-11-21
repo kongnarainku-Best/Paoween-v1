@@ -2,16 +2,24 @@ import Link from "next/link";
 import { ArrowDownLeft, ArrowUpRight, Plus, ReceiptText } from "lucide-react";
 
 import { currentThaiTaxYear, formatThaiDate, formatTHB, getRecentBangkokMonths, getSignedInUser } from "@/lib/finance/server";
-import { transactionTypeLabels } from "@/lib/finance/validation";
+import { summarizeInvestment, type InvestmentDirection } from "@/lib/finance/investment";
+import { taxRecordTypeLabels, transactionTypeLabels } from "@/lib/finance/validation";
 import { OnboardingSummary } from "@/app/settings/new-user/onboarding-summary";
+import { onboardingSessionScope } from "@/lib/finance/onboarding";
 import { MonthlyTrend, type MonthSummary } from "@/app/dashboard/monthly-trend";
 
 type MonthTransaction = { id: string; transaction_date: string; transaction_type: "income" | "expense" | "investment" | "transfer"; description: string; amount_thb: number | string; category: string };
-type DashboardTrendRow = { transaction_date: string; transaction_type: "income" | "expense" | "investment"; amount_thb: number | string };
+type DashboardTrendRow = {
+  transaction_date: string;
+  transaction_type: "income" | "expense" | "investment";
+  amount_thb: number | string;
+  investment_direction: InvestmentDirection | null;
+};
 type TaxPreview = { id: string; record_type: string; tax_category: string; amount_thb: number | string | null; review_status: string };
 
 export default async function DashboardPage() {
-  const { supabase, userId } = await getSignedInUser();
+  const { supabase, userId, claims } = await getSignedInUser();
+  const onboardingScope = onboardingSessionScope(userId, claims);
   const months = getRecentBangkokMonths(7);
   const currentMonth = months.at(-1)!;
   const taxYear = currentThaiTaxYear();
@@ -20,10 +28,10 @@ export default async function DashboardPage() {
     let offset = 0;
     while (true) {
       const { data, error } = await supabase.from("transactions")
-        .select("transaction_date,transaction_type,amount_thb")
+        .select("transaction_date,transaction_type,amount_thb,investment_direction")
         .eq("user_id", userId).in("transaction_type", ["income", "expense", "investment"])
         .gte("transaction_date", months[0].start).lt("transaction_date", currentMonth.end)
-        .order("transaction_date", { ascending: false }).range(offset, offset + 999);
+        .order("transaction_date", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 999);
       if (error || !data) return { rows, failed: true };
       rows.push(...data as DashboardTrendRow[]);
       if (data.length < 1000) return { rows, failed: false };
@@ -42,43 +50,57 @@ export default async function DashboardPage() {
   const { data: recentData, error: recentError } = recentResult;
   const { data: taxData, count: taxCount, error: taxError } = taxResult;
 
-  const sums = { income: 0, expense: 0, investment: 0 };
+  const sums = { income: 0, expense: 0 };
   const monthlyTotals = new Map(months.map((month) => [month.key, { income: 0, expense: 0 }]));
+  const monthlyInvestments: DashboardTrendRow[] = [];
   for (const row of trendResult.rows) {
     const amount = Number(row.amount_thb);
     const monthKey = row.transaction_date.slice(0, 7);
     if (monthKey === currentMonth.key && row.transaction_type === "income") sums.income += amount;
     if (monthKey === currentMonth.key && row.transaction_type === "expense") sums.expense += amount;
-    if (monthKey === currentMonth.key && row.transaction_type === "investment") sums.investment += amount;
+    if (monthKey === currentMonth.key && row.transaction_type === "investment") monthlyInvestments.push(row);
     const monthly = monthlyTotals.get(monthKey);
     if (monthly && row.transaction_type === "income") monthly.income += amount;
     if (monthly && row.transaction_type === "expense") monthly.expense += amount;
   }
+  const investmentTotals = summarizeInvestment(monthlyInvestments);
   const monthlyTrend: MonthSummary[] = months.map((month) => ({ ...month, ...monthlyTotals.get(month.key)! }));
   const recent = (recentData ?? []) as MonthTransaction[];
   const taxRecords = (taxData ?? []) as TaxPreview[];
   const monthLabel = new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${currentMonth.key}-01T00:00:00.000Z`));
 
   return <div className="workspace-content dashboard-home">
-    <OnboardingSummary />
+    <OnboardingSummary key={onboardingScope} scope={onboardingScope} />
     <section className="dashboard-welcome" aria-labelledby="welcome-heading">
       <div className="dashboard-welcome-copy">
         <p className="eyebrow">ภาพรวมการเงินส่วนตัว</p>
         <h1 id="welcome-heading">จัดการเงินของคุณในที่เดียว</h1>
         <p className="welcome-tagline">คุยกับเป๋าวีนเพื่อวิเคราะห์และร่างรายการได้ทุกเมื่อ</p>
         <p className="welcome-period">ภาพรวมเดือน {monthLabel}</p>
-        <Link className="button-primary" href="/dashboard/transactions/new"><Plus size={17} aria-hidden="true" /> เพิ่มรายการ</Link>
+        <div className="pocket-heading-actions">
+          <Link className="button-primary" href="/dashboard/transactions/new"><Plus size={17} aria-hidden="true" /> {recent.length || recentError ? "เพิ่มรายการ" : "เพิ่มรายการแรก"}</Link>
+          <Link className="button-secondary" href="/dashboard/pockets">ดูยอดกระเป๋า</Link>
+        </div>
       </div>
     </section>
 
     <section className="metric-grid" aria-label="สรุปรายการเดือนนี้">
       <Metric label="รายรับ" value={trendResult.failed ? null : sums.income} accent="green" icon={<ArrowDownLeft size={17} aria-hidden="true" />} />
       <Metric label="รายจ่าย" value={trendResult.failed ? null : sums.expense} accent="amber" icon={<ArrowUpRight size={17} aria-hidden="true" />} />
-      <Metric label="ลงทุน" value={trendResult.failed ? null : sums.investment} accent="blue" icon={<ReceiptText size={17} aria-hidden="true" />} />
+      <article className="metric-card blue">
+        <div className="metric-label">
+          <Link href="/dashboard/investment" className="text-link">ลงทุน</Link>
+          <span><ReceiptText size={17} aria-hidden="true" /></span>
+        </div>
+        <dl className="metric-investment">
+          <div><dt>ซื้อ</dt><dd>{formatTHB(trendResult.failed ? null : investmentTotals.buy)}</dd></div>
+          <div><dt>ขาย</dt><dd>{formatTHB(trendResult.failed ? null : investmentTotals.sell)}</dd></div>
+        </dl>
+      </article>
       <Metric label="คงเหลือจากรายรับ/รายจ่าย" value={trendResult.failed ? null : sums.income - sums.expense} accent="neutral" />
     </section>
     {trendResult.failed && <p className="notice notice-error" role="alert">โหลดข้อมูลสรุปไม่ครบ กรุณาโหลดหน้านี้ใหม่</p>}
-    <p className="small-note">ยอดสรุปอิงรายการที่คุณบันทึกเอง ไม่รวมการโอนระหว่างบัญชี และไม่ใช่ยอดเงินคงเหลือในบัญชีธนาคาร ยอดลงทุนเป็นยอดรายการซื้อและขายรวมกัน ไม่ใช่มูลค่าพอร์ต</p>
+    <p className="small-note">ยอดรายรับ รายจ่าย และซื้อขายลงทุนอิงรายการที่คุณบันทึกในเดือนนี้</p>
 
     {!trendResult.failed && <MonthlyTrend months={monthlyTrend} />}
 
@@ -97,8 +119,8 @@ export default async function DashboardPage() {
         {taxError ? <p className="notice notice-error" role="alert">โหลดรายการภาษีไม่สำเร็จ กรุณาโหลดหน้านี้ใหม่</p> : <>
         <div className="tax-summary"><strong>{taxCount ?? 0}</strong><span>รายการในปีภาษีนี้</span></div>
         {taxRecords.length ? <div className="tax-preview-list">{taxRecords.map((record) => <div className="tax-preview-row" key={record.id}>
-          <span><strong>{record.tax_category}</strong><small>{record.record_type}</small></span>
-          <span className="right-value">{formatTHB(record.amount_thb)}<small>{record.review_status === "confirmed" ? "ยืนยันแล้ว" : record.review_status === "rejected" ? "ไม่รับรายการ" : "รอตรวจสอบ"}</small></span>
+          <span><strong>{record.tax_category}</strong><small>{taxRecordTypeLabels[record.record_type as keyof typeof taxRecordTypeLabels] ?? record.record_type}</small></span>
+          <span className="right-value">{record.amount_thb === null ? "ยังไม่ทราบ" : formatTHB(record.amount_thb)}<small>{record.review_status === "confirmed" ? "ยืนยันแล้ว" : record.review_status === "rejected" ? "ไม่รับรายการ" : "รอตรวจสอบ"}</small></span>
         </div>)}</div> : <div className="tax-empty">บันทึกหลักฐานและรายการภาษีไว้ในที่เดียว โดยตรวจเอกสารก่อนยืนยันเสมอ</div>}
         <Link className="button-secondary button-wide" href="/dashboard/tax/new"><Plus size={16} aria-hidden="true" /> เพิ่มรายการภาษี</Link>
         </>}

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OnboardingHandoffProvider } from "@/app/settings/new-user/onboarding-handoff";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="th">
-      <body>{children}</body>
+      <body><OnboardingHandoffProvider>{children}</OnboardingHandoffProvider></body>
     </html>
   );
 }

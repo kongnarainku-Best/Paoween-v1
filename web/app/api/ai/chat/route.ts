@@ -5,9 +5,10 @@ import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCat
 import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
+import { buildTaxContext, taxContextLimit, type TaxContextRow } from "@/lib/finance/tax-context";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { transactionMatchKey } from "@/lib/finance/transaction-match";
-import { transactionCategories, transactionSchema } from "@/lib/finance/validation";
+import { transactionCategories, transactionDraftSchema } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -183,6 +184,7 @@ function parseAssistantOutput(content: string): ParsedAssistantOutput {
 type TransactionRow = {
   transaction_date: string;
   transaction_type: "income" | "expense" | "investment" | "transfer";
+  investment_direction: "buy" | "sell" | null;
   description: string;
   amount_thb: number | string;
   category: string;
@@ -203,15 +205,20 @@ function bangkokToday() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function makeFinanceContext(rows: TransactionRow[], year: string, month: string, taxRows: Array<{ record_type: string; tax_category: string; amount_thb: number | string | null; review_status: string }>) {
-  const totals = { income: 0, expense: 0, investment: 0, transfer: 0 };
+function makeFinanceContext(rows: TransactionRow[], year: string, month: string, taxContext: ReturnType<typeof buildTaxContext> | null) {
+  const totals = { income: 0, expense: 0, investment_buy: 0, investment_sell: 0, investment_unknown: 0, transfer: 0 };
   const categories = new Map<string, number>();
   for (const row of rows) {
     const amount = Number(row.amount_thb);
-    totals[row.transaction_type] += amount;
+    if (row.transaction_type === "investment") {
+      if (row.investment_direction === "buy") totals.investment_buy += amount;
+      else if (row.investment_direction === "sell") totals.investment_sell += amount;
+      else totals.investment_unknown += amount;
+    } else {
+      totals[row.transaction_type] += amount;
+    }
     if (row.transaction_type === "expense") categories.set(row.category, (categories.get(row.category) ?? 0) + amount);
   }
-  const taxQuestion = taxRows.length > 0;
   return JSON.stringify({
     scope: { year: year === "all" ? "all" : Number(year) + 543, month, recordCount: rows.length },
     note: "Totals and categories cover up to the 60 newest transactions returned for this selected scope. Item details are limited to the 20 newest; descriptions are shortened.",
@@ -223,13 +230,9 @@ function makeFinanceContext(rows: TransactionRow[], year: string, month: string,
       description: row.description.slice(0, 120),
       amount_thb: Number(row.amount_thb),
       category: row.category,
+      ...(row.transaction_type === "investment" ? { investment_direction: row.investment_direction } : {}),
     })),
-    ...(taxQuestion ? { tax_records_for_selected_calendar_year: taxRows.map((row) => ({
-      record_type: row.record_type,
-      category: row.tax_category,
-      amount_thb: row.amount_thb === null ? null : Number(row.amount_thb),
-      review_status: row.review_status,
-    })) } : {}),
+    ...(taxContext ? { tax_preparation: taxContext } : {}),
   });
 }
 
@@ -301,10 +304,10 @@ export async function POST(request: Request) {
 
   if (parsed.data.includeFinanceData) {
     const scopedQuery = dateRange ? supabase.from("transactions")
-      .select("transaction_date,transaction_type,description,amount_thb,category")
+      .select("transaction_date,transaction_type,description,amount_thb,category,investment_direction")
       .eq("user_id", userId).gte("transaction_date", dateRange.start).lt("transaction_date", dateRange.end)
       .order("transaction_date", { ascending: false }).limit(2000) : supabase.from("transactions")
-      .select("transaction_date,transaction_type,description,amount_thb,category")
+      .select("transaction_date,transaction_type,description,amount_thb,category,investment_direction")
       .eq("user_id", userId).gte("transaction_date", "1900-01-01")
       .order("transaction_date", { ascending: false }).limit(5000);
     const { data: allRows, error: rowsError } = await scopedQuery;
@@ -312,17 +315,20 @@ export async function POST(request: Request) {
     const filteredRows = month === "all" ? allRows : allRows.filter((row) => row.transaction_date.slice(5, 7) === month);
     const rows = filteredRows.slice(0, 60);
     transactionCount = rows.length;
-    let taxRows: Array<{ record_type: string; tax_category: string; amount_thb: number | string | null; review_status: string }> = [];
+    let taxContext: ReturnType<typeof buildTaxContext> | null = null;
     if (mentionsTax(parsed.data.message)) {
-      let taxQuery = supabase.from("tax_records").select("record_type,tax_category,amount_thb,review_status").eq("user_id", userId);
-      if (year !== "all") taxQuery = taxQuery.eq("tax_year", Number(year) + 543);
-      const { data, error } = await taxQuery.order("created_at", { ascending: false }).limit(20);
+      const selectedTaxYear = year === "all" ? "all" : Number(year) + 543;
+      let taxQuery = supabase.from("tax_records")
+        .select("tax_year,record_type,tax_category,amount_thb,document_status,review_status", { count: "exact" })
+        .eq("user_id", userId);
+      if (selectedTaxYear !== "all") taxQuery = taxQuery.eq("tax_year", selectedTaxYear);
+      const { data, count, error } = await taxQuery.order("created_at", { ascending: false }).order("id").limit(taxContextLimit);
       if (error || !data) return Response.json({ error: "Could not load the selected period's tax preparation records. Please try again." }, { status: 503 });
-      taxRows = data;
+      taxContext = buildTaxContext(data as TaxContextRow[], selectedTaxYear, count);
       taxRecordCount = data.length;
       taxLookupPerformed = true;
     }
-    context = makeFinanceContext(rows as TransactionRow[], year, month, taxRows);
+    context = makeFinanceContext(rows as TransactionRow[], year, month, taxContext);
     includedFinanceData = true;
   }
 
@@ -446,11 +452,11 @@ export async function POST(request: Request) {
             });
             const edit = requestedEdit && requestedEdit.success && target
               && Object.keys(requestedEdit.data.changes).length > 0
-              && transactionSchema.safeParse({ ...target.proposal, ...requestedEdit.data.changes }).success
+              && transactionDraftSchema.safeParse({ ...target.proposal, ...requestedEdit.data.changes }).success
               ? requestedEdit.data : null;
             if (change && !edit) structured.reply = "ยังแก้รายการไม่ได้ครับ ลองระบุเลขรายการและข้อมูลที่ต้องการแก้ให้ชัดขึ้น";
             const candidates = (change ? [] : structured.transaction_proposals).flatMap(({ category_options, ...proposal }) => {
-              const transaction = transactionSchema.safeParse(proposal);
+              const transaction = transactionDraftSchema.safeParse(proposal);
               if (!transaction.success) return [];
               const options = validatedImages.length ? parseCategoryOptions(category_options) : [];
               const action = /^(?:create|save|add|record|insert|update|delete|expense|income|transfer|investment|purchase|buy|payment)(?:\s+(?:transaction|record|entry|expense|income|transfer))?$/i.test(proposal.action.trim()) ? "" : proposal.action;

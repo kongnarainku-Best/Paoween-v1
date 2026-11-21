@@ -1,39 +1,20 @@
 "use client";
 
 import { Check, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { useOnboardingHandoff } from "@/app/settings/new-user/onboarding-handoff";
 
 type Summary = { salary: number | null; fileKind: "image" | "pdf" | null };
 
-export function OnboardingSummary() {
+export function OnboardingSummary({ scope }: { scope: string }) {
+  const handoff = useOnboardingHandoff();
   const [summary, setSummary] = useState<Summary | null>(null);
 
-  const consumed = useRef(false);
-
   useEffect(() => {
-    if (consumed.current) return;
-    consumed.current = true;
-    const key = "paoween-onboarding-handoff";
-    let value: Summary | null = null;
-    try {
-      const raw = sessionStorage.getItem(key);
-      sessionStorage.removeItem(key);
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          const candidate = parsed as Record<string, unknown>;
-          const salary = candidate.salary;
-          if ((salary === null || typeof salary === "number" && Number.isFinite(salary) && salary > 0) && typeof candidate.hasSlip === "boolean") {
-            const fileKind = candidate.fileKind === "pdf" ? "pdf" : "image";
-            value = { salary, fileKind: candidate.hasSlip ? fileKind : null };
-          }
-        }
-      }
-    } catch {
-      // An unavailable store or invalid handoff leaves the banner hidden.
-    }
-    setSummary(value);
-  }, []);
+    const pending = handoff.take(scope, "summary");
+    if (pending?.kind === "summary") setSummary(pending);
+  }, [scope, handoff]);
 
   if (!summary) return null;
   return <aside className="onboarding-summary" aria-label="สรุปการเริ่มต้น">

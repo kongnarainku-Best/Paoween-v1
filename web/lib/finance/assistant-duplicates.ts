@@ -9,6 +9,7 @@ export async function findAssistantDuplicate(
   userId: string,
   transaction: TransactionInput,
   exceptId?: string,
+  includeUnassignedMatches = false,
 ) {
   const description = normalizeTransactionDescription(transaction.description);
   const query = supabase.from("transactions").select("id,description")
@@ -17,6 +18,13 @@ export async function findAssistantDuplicate(
     .eq("transaction_type", transaction.transaction_type)
     .eq("amount_thb", transaction.amount_thb)
     .order("id");
+  for (const field of ["investment_direction", "pocket_id", "destination_pocket_id"] as const) {
+    const value = transaction[field];
+    if (includeUnassignedMatches) {
+      if (value) query.or(`${field}.eq.${value},${field}.is.null`);
+    } else if (value) query.eq(field, value);
+    else query.is(field, null);
+  }
   if (exceptId) query.neq("id", exceptId);
 
   const pageSize = 250;

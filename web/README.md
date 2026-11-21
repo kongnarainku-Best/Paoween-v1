@@ -14,9 +14,10 @@ For Vercel, import the repository with `web` as the Root Directory, configure th
 ## Checks
 
 - `npm run typecheck` checks TypeScript.
-- `npm run test:assistant` checks conversation history and account scope offline.
+- `npm run test:finance` runs the offline chat, tax, investment, and Pocket regressions.
+- Run `scripts/pocket-balances.test.sql` with `psql -v ON_ERROR_STOP=1` against a disposable Supabase database after applying the migrations. The test rolls back its fixtures.
 - `npm run eval:assistant` sends synthetic Thai prompts and a demo receipt to OpenAI. Provide `OPENAI_API_KEY` in the environment. This command uses the API and can incur charges.
 
 ## Data handling
 
-Transactions and tax records are stored in the signed-in account. Chat messages and submitted images go to OpenAI. The app includes a snapshot of account records only when the user chooses to attach it. A draft stays in chat until the user confirms the save.
+Transactions, pockets, and tax records are stored in the signed-in account. Chat messages and submitted images go to OpenAI. The app includes a snapshot of account records only when the user chooses to attach it. A draft stays in chat until the user confirms the save.

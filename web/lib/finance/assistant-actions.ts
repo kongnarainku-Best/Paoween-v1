@@ -12,8 +12,15 @@ export const proposalSchema = z.object({
   amount_thb: z.string().max(32),
   category: z.string().max(80),
   action: z.string().max(240),
+  investment_direction: z.enum(["buy", "sell"]).nullish(),
 }).strict();
 export type TransactionProposal = z.infer<typeof proposalSchema>;
+
+export const confirmationProposalSchema = proposalSchema.extend({
+  pocket_id: z.uuid().nullish(),
+  destination_pocket_id: z.uuid().nullish(),
+});
+export type ConfirmationProposal = z.infer<typeof confirmationProposalSchema>;
 
 export const draftNumberSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 export const draftEditSchema = z.object({
