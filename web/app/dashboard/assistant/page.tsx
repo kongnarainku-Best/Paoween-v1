@@ -11,7 +11,7 @@ export default function AssistantPage() {
         <h1>คุยกับเป๋าวีน<span className="period">.</span></h1>
         <p>ผู้ช่วยเรื่องเงินที่เปิดคุยได้จากทุกหน้า ถามเป็นภาษาไทย แนบภาพบิลให้ช่วยอ่านได้ และเลือกเองว่าจะให้ใช้ข้อมูลรายการในเว็บประกอบคำตอบหรือไม่</p>
         <AssistantOpenButton />
-        <div className="assistant-page-privacy"><ShieldCheck size={16} aria-hidden="true" /><span>ข้อความและภาพจะส่งไป OpenAI API เมื่อกดส่งเท่านั้น · รายการเงินจะถูกแนบเมื่อคุณเลือกเปิดการตั้งค่านี้</span></div>
+        <div className="assistant-page-privacy"><ShieldCheck size={16} aria-hidden="true" /><span>ข้อความและภาพจะส่งไป OpenAI API เมื่อกดส่งเท่านั้น · เป๋าวีนจะขออนุญาตในแชตก่อนใช้ข้อมูลบัญชีในแต่ละครั้ง</span></div>
       </div>
       <div className="assistant-page-mascot" aria-label="เป๋าวีนกำลังรอช่วยคิด">
         <span><Sparkles size={14} aria-hidden="true" /> YOUR MONEY BUDDY</span>

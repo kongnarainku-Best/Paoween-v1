@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
-import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCategoryOptions, parseReplySuggestions, proposalSchema } from "@/lib/finance/assistant-actions";
+import { assistantNavigationSchema, draftEditSchema, draftNumberSchema, parseCategoryOptions, parseReplySuggestions, proposalSchema, recordRequestSchema } from "@/lib/finance/assistant-actions";
 import { findAssistantDuplicate } from "@/lib/finance/assistant-duplicates";
 import { assistantHistoryMaxLength, assistantHistoryMaxMessageLength, assistantHistoryMaxMessages } from "@/lib/finance/assistant-history";
 import { assistantOutputSchema, buildAssistantPrompt } from "@/lib/finance/assistant-prompt";
@@ -40,6 +40,7 @@ const assistantOutputValidator = z.object({
   reply: z.string().trim().min(1).max(4_000),
   transaction_proposals: z.array(proposalSchema.extend({ category_options: z.unknown().optional() })).max(5),
   navigation: assistantNavigationSchema.nullish(),
+  record_request: recordRequestSchema.nullish(),
   reply_suggestions: z.unknown().optional(),
   draft_edit: z.object({
     number: draftNumberSchema,
@@ -335,7 +336,7 @@ export async function POST(request: Request) {
   const systemPrompt = buildAssistantPrompt({
     categories: transactionCategories,
     date: bangkokToday(),
-    scopeLabel,
+    scopeLabel: includedFinanceData ? scopeLabel : "none confirmed",
     accountContext: context,
     conversationItems: parsed.data.conversationItems === undefined ? undefined : JSON.stringify(parsed.data.conversationItems),
   });
@@ -489,6 +490,7 @@ export async function POST(request: Request) {
               categoryOptions: available.map(({ options }) => options),
               duplicates,
               duplicateImagePositions,
+              recordRequest: includedFinanceData || validatedImages.length || change || structured.navigation || candidates.length ? null : structured.record_request ?? null,
               navigation: structured.navigation ?? null,
               edit,
               replySuggestions: change && !edit ? [] : parseReplySuggestions(structured.reply_suggestions),

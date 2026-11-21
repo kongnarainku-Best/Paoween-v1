@@ -4,6 +4,13 @@ import { assistantPages } from "./assistant-prompt";
 import { transactionCategories } from "./validation";
 export { assistantPages };
 
+export const recordRequestSchema = z.object({
+  year: z.string().regex(/^(?:all|(?:19|20|21)\d{2})$/),
+  month: z.string().regex(/^(?:all|0[1-9]|1[0-2])$/),
+  tax: z.boolean(),
+}).strict();
+export type RecordRequest = z.infer<typeof recordRequestSchema>;
+
 export const assistantPageSchema = z.enum(Object.keys(assistantPages) as [keyof typeof assistantPages, ...(keyof typeof assistantPages)[]]);
 export const proposalSchema = z.object({
   transaction_date: z.string().max(20),
